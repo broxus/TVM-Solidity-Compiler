@@ -149,9 +149,9 @@ fn test_private_function_ids() -> Status {
         .stdout(predicate::str::contains(
             r#"[
   {
-    "id": 5581,
+    "id": 7460,
     "scope": "C",
-    "sign": "f(uint32,uint256,uint256)"
+    "sign": "f(int19,uint256,uint256)"
   },
   {
     "id": 7504,

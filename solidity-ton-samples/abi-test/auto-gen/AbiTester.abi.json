@@ -1,0 +1,110 @@
+{
+	"ABI version": 2,
+	"version": "2.3",
+	"header": ["time", "expire"],
+	"functions": [
+		{
+			"name": "setA",
+			"inputs": [
+				{"name":"a","type":"int8"}
+			],
+			"outputs": [
+			]
+		},
+		{
+			"name": "setAddress",
+			"inputs": [
+				{"name":"newAddr","type":"address"}
+			],
+			"outputs": [
+			]
+		},
+		{
+			"name": "f",
+			"inputs": [
+				{"name":"a","type":"int8"},
+				{"name":"b","type":"varint32"},
+				{"name":"c","type":"bool"},
+				{"name":"d","type":"map(uint256,map(uint256,uint256))"},
+				{"name":"e","type":"address"},
+				{"name":"str","type":"string"},
+				{"name":"data","type":"bytes"},
+				{"name":"optCell","type":"optional(cell)"},
+				{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"p","type":"tuple"},
+				{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"points","type":"map(uint256,tuple)"},
+				{"components":[{"name":"z","type":"uint256"},{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"p","type":"tuple"}],"name":"point3d","type":"optional(tuple)"},
+				{"name":"arr","type":"uint256[]"}
+			],
+			"outputs": [
+			]
+		}
+	],
+	"getters": [
+		{
+			"name": "getDeltaA",
+			"inputs": [
+				{"name":"deltaA","type":"int8"}
+			],
+			"outputs": [
+				{"name":"value0","type":"int8"}
+			]
+		},
+		{
+			"name": "getSomeInfo",
+			"inputs": [
+				{"name":"a","type":"int8"},
+				{"name":"b","type":"varint32"},
+				{"name":"c","type":"bool"},
+				{"name":"d","type":"map(uint256,map(uint256,uint256))"},
+				{"name":"e","type":"address"},
+				{"name":"str","type":"string"},
+				{"name":"data","type":"bytes"},
+				{"name":"cell","type":"cell"},
+				{"name":"optCell","type":"optional(cell)"},
+				{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"p","type":"tuple"},
+				{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"points","type":"map(uint256,tuple)"},
+				{"components":[{"name":"z","type":"uint256"},{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"p","type":"tuple"}],"name":"point3d","type":"optional(tuple)"},
+				{"name":"arr","type":"uint256[]"},
+				{"components":[{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"p0","type":"tuple"},{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"p1","type":"tuple"},{"name":"ok","type":"bool"}],"name":"p4","type":"tuple"},
+				{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"pointMap","type":"map(uint256,tuple)"}
+			],
+			"outputs": [
+				{"name":"a2","type":"int8"},
+				{"name":"b2","type":"varint32"},
+				{"name":"c2","type":"bool"},
+				{"name":"d2","type":"map(uint256,map(uint256,uint256))"},
+				{"name":"e2","type":"address"},
+				{"name":"str2","type":"string"},
+				{"name":"data2","type":"bytes"},
+				{"name":"cell2","type":"cell"},
+				{"name":"optCell2","type":"optional(cell)"},
+				{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"p2","type":"tuple"},
+				{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"points2","type":"map(uint256,tuple)"},
+				{"components":[{"name":"z","type":"uint256"},{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"p","type":"tuple"}],"name":"point3d2","type":"optional(tuple)"},
+				{"name":"arr2","type":"uint256[]"},
+				{"components":[{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"p0","type":"tuple"},{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"p1","type":"tuple"},{"name":"ok","type":"bool"}],"name":"p42","type":"tuple"},
+				{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"pointMap2","type":"map(uint256,tuple)"}
+			]
+		}
+	],
+	"data": [
+	],
+	"events": [
+	],
+	"fields": [
+		{"name":"_pubkey","type":"uint256"},
+		{"name":"_timestamp","type":"uint64"},
+		{"name":"m_a","type":"int8"},
+		{"name":"m_b","type":"varint32"},
+		{"name":"m_c","type":"bool"},
+		{"name":"m_d","type":"map(uint256,map(uint256,uint256))"},
+		{"name":"m_e","type":"address"},
+		{"name":"m_str","type":"string"},
+		{"name":"m_data","type":"bytes"},
+		{"name":"m_optCell","type":"optional(cell)"},
+		{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"m_p","type":"tuple"},
+		{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"m_points","type":"map(uint256,tuple)"},
+		{"components":[{"name":"z","type":"uint256"},{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"p","type":"tuple"}],"name":"m_point3d","type":"optional(tuple)"},
+		{"name":"m_arr","type":"uint256[]"}
+	]
+}

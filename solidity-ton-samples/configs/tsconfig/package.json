@@ -1,0 +1,20 @@
+{
+    "name": "@solidity-ton/tsconfig-shared",
+    "version": "0.7.0",
+    "private": true,
+    "description": "Shared ts configuration",
+    "scripts": {
+        "prettier:check": "prettier --check .",
+        "prettier:fix": "prettier --write .",
+        "eslint:check": "echo workspace does not contain any code",
+        "eslint:fix": "echo workspace does not contain any code",
+        "test": "echo workspace does not contain any tests",
+        "build": "echo workspace does not contain any code"
+    },
+    "dependencies": {
+        "typescript": "^5.4.5"
+    },
+    "devDependencies": {
+        "@solidity-ton/prettier-config-shared": "*"
+    }
+}

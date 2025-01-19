@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2023 EverX. All Rights Reserved.
+ * Copyright (C) 2021-2024 EverX. All Rights Reserved.
  *
  * Licensed under the  terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License.
@@ -102,7 +102,7 @@ void GetFromDict::getDict() {
 	// if op == GetSetFromMapping than stack: value key dict keyLength
 	// else                            stack: key dict keyLength
 
-	const int saveStack = pusher.stackSize();
+	const int saveStake = pusher.stackSize();
 	std::string opcode = "DICT" + typeToDictChar(&keyType);
 	int take{};
 	int ret{};
@@ -206,7 +206,7 @@ void GetFromDict::getDict() {
 	}
 	pusher.endOpaque(take, ret);
 
-	pusher.ensureSize(saveStack - take + ret);
+	pusher.ensureSize(saveStake -take + ret);
 }
 
 void GetFromDict::checkExist() {

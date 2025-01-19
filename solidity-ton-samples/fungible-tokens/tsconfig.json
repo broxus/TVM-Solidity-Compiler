@@ -1,0 +1,4 @@
+{
+    "extends": "@solidity-ton/tsconfig-shared",
+    "include": ["**/*.ts", "**/*.tsx", "**/*.json"]
+}

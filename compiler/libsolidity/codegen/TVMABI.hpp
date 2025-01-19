@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2023 EverX. All Rights Reserved.
+ * Copyright (C) 2019-2024 EverX. All Rights Reserved.
  *
  * Licensed under the  terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License.
@@ -32,14 +32,14 @@ public:
 	);
 	static Json::Value generatePrivateFunctionIdsJson(
 			ContractDefinition const& contract,
-			const std::vector<std::shared_ptr<SourceUnit>>& _sourceUnits,
+			const std::vector<ASTPointer<SourceUnit>>& _sourceUnits,
 			PragmaDirectiveHelper const& pragmaHelper
 	);
 	static void generateABI(ContractDefinition const* contract,
-							std::vector<std::shared_ptr<SourceUnit>> const& _sourceUnits,
+							std::vector<ASTPointer<SourceUnit>> const& _sourceUnits,
 							std::vector<PragmaDirective const *> const& pragmaDirectives, std::ostream* out = &std::cout);
 	static Json::Value generateABIJson(ContractDefinition const* contract,
-							std::vector<std::shared_ptr<SourceUnit>> const& _sourceUnits,
+							std::vector<ASTPointer<SourceUnit>> const& _sourceUnits,
 							std::vector<PragmaDirective const *> const& pragmaDirectives);
 private:
 	static std::vector<const FunctionDefinition *> publicFunctions(ContractDefinition const& contract);

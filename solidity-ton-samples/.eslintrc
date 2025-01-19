@@ -1,0 +1,4 @@
+{
+    "extends": ["@solidity-ton/eslint-config-shared"],
+    "root": true
+}

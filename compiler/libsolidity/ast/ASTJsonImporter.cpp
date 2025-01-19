@@ -810,7 +810,6 @@ ASTPointer<Break> ASTJsonImporter::createBreak(Json::Value const&  _node)
 
 ASTPointer<Return> ASTJsonImporter::createReturn(Json::Value const&  _node)
 {
-	solUnimplemented("");
 	std::vector<ASTPointer<Expression>> options;
 	for (auto& option: member(_node, "options"))
 		options.push_back(convertJsonToASTNode<Expression>(option));
@@ -827,8 +826,7 @@ ASTPointer<Return> ASTJsonImporter::createReturn(Json::Value const&  _node)
 		nullOrASTString(_node, "documentation"),
 		nullOrCast<Expression>(member(_node, "expression")),
 		options,
-		names,
-		sourceLocations.value()
+		names
 	);
 }
 

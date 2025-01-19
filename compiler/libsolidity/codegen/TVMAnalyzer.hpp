@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2023 EverX. All Rights Reserved.
+ * Copyright (C) 2020-2024 EverX. All Rights Reserved.
  *
  * Licensed under the  terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License.
@@ -40,6 +40,7 @@ public:
 	bool analyze(SourceUnit const& _sourceUnit);
 
 private:
+	bool visit(RevertStatement const& _revertStatement) override;
 	bool visit(MemberAccess const& contract) override;
 	bool visit(ContractDefinition const& contract) override;
 	bool visit(FunctionDefinition const& _function) override;

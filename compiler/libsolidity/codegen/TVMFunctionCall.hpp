@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2023 EverX. All Rights Reserved.
+ * Copyright (C) 2019-2024 EverX. All Rights Reserved.
  *
  * Licensed under the  terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License.
@@ -69,6 +69,7 @@ protected:
 	bool checkForTvmSendFunction(MemberAccess const& _node);
 	void msgFunction(MemberAccess const& _node);
 	void rndFunction(MemberAccess const& _node);
+	void rist255Function();
 	void blsFunction();
 	void goshFunction();
 	void codeSalt();
@@ -83,6 +84,7 @@ protected:
 	void createObject();
 	void typeConversion();
 	bool checkLocalFunctionOrLibCall(const Identifier* identifier);
+	bool checkHashFunctions();
 	bool checkSolidityUnits();
 	bool checkLocalFunctionOrLibCallOrFuncVarCall();
 	bool checkNewExpression();
@@ -109,9 +111,8 @@ protected:
 		Data,
 		Library
 	};
-	void encodeStateInit(std::map<StateInitMembers, std::function<void()>> exprs);
+	void encodeStateInit(const std::map<StateInitMembers, std::function<void()>> &exprs) const;
 	std::function<void()> generateDataSection(
-		bool data_map_supported,
 		const std::function<void()>& pushKey,
 		Expression const* vars,
 		ContractType const* ct

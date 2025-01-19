@@ -18,23 +18,76 @@ function __QOR(qint a, qint b) assembly pure returns (qint) {
 }
 
 contract stdlib {
+    function insert_pubkey(TvmCell stateInit, uint256  pubkey) private pure returns (TvmCell /*new StateInit*/) {
+        // tick_tock$_   tick:Bool   tock:Bool   =   TickTock;
+
+        // _   split_depth:(Maybe (## 5))   special:(Maybe TickTock)
+        //     code:(Maybe ^Cell)   data:(Maybe ^Cell)
+        //     library:(Maybe ^Cell)
+        //     = StateInit;
+
+        TvmSlice slice = stateInit.toSlice();
+        TvmBuilder builder;
+
+        // split_depth:(Maybe (## 5))
+        if (slice.load(bool)) { // Maybe yes
+            builder.store(true);
+            uint32 split_depth = slice.load(uint32);
+            builder.store(true, split_depth);
+        } else { // Maybe no
+            builder.store(false);
+        }
+
+        // special:(Maybe TickTock)
+        if (slice.load(bool)) { // Maybe yes
+            builder.store(true);
+            (bool tick, bool tock) = slice.load(bool, bool);
+            builder.store(tick, tock);
+        } else { // Maybe no
+            builder.store(false);
+        }
+
+        // code:(Maybe ^Cell)
+        builder.store(slice.load(mapping(bool => bool)));
+
+        // data:(Maybe ^Cell)
+        {
+            mapping(uint64 => uint256) data;
+            if (slice.load(bool)) {
+                TvmSlice tmp = slice.loadRefAsSlice();
+                data = tmp.load(mapping(uint64 => uint256));
+            }
+            data[0] = pubkey;
+            TvmBuilder builderData;
+            builderData.store(data);
+            builder.store(true);
+            builder.storeRef(builderData);
+        }
+
+        // library:(Maybe ^Cell)
+        builder.store(slice.load(mapping(bool => bool)));
+
+        require(slice.empty(), 55);
+
+        return builder.toCell();
+    }
+
     function __replayProtection(uint64 msg_timestamp) view private {
         require(tvm.replayProtTime() < msg_timestamp, 52);
         require(msg_timestamp < block.timestamp * 1000 + tvm.replayProtInterval(), 52);
         tvm.setReplayProtTime(msg_timestamp);
     }
 
-    function __tonToGas(uint128 _ton, int8 wid) private pure returns(uint128) {
-        return math.muldiv(_ton, 65536, __gasGasPrice(wid)); // round down
+    function __tonToGas(uint128 _ton, bool isMasterChain) private pure returns(uint128) {
+        return math.muldiv(_ton, 65536, __gasGasPrice(isMasterChain)); // round down
     }
 
-    function __gasToTon(uint128 gas, int8 wid) private pure returns(uint128) {
-        return math.muldivc(gas, __gasGasPrice(wid), 65536); // round up
+    function __gasToTon(uint128 gas, bool isMasterChain) private pure returns(uint128) {
+        return math.muldivc(gas, __gasGasPrice(isMasterChain), 65536); // round up
     }
 
-    function __gasGasPrice(int8 wid) private pure returns(uint64 gasPrice) {
-        require(wid == 0 || wid == -1, 67);
-        optional(TvmCell) optCell = tvm.rawConfigParam(wid == 0 ? int32(21) : int32(20));
+    function __gasGasPrice(bool isMasterChain) private pure returns(uint64 gasPrice) {
+        optional(TvmCell) optCell = tvm.rawConfigParam(isMasterChain? int32(20) : int32(21));
         require(optCell.hasValue(), 68);
         TvmSlice s = optCell.get().toSlice();
         (, , , , gasPrice) = s.load(uint8, uint64, uint64, uint8, uint64);

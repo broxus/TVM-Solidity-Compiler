@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2023 EverX. All Rights Reserved.
+ * Copyright (C) 2020-2024 EverX. All Rights Reserved.
  *
  * Licensed under the  terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License.
@@ -105,9 +105,6 @@ private:
 };
 
 int PrivatePeepholeOptimizer::nextCommandLine(int idx) const {
-	if (idx == -1) {
-		return -1;
-	}
 	return nextCommandLine(idx + 1, m_instructions);
 }
 

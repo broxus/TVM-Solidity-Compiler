@@ -1989,17 +1989,16 @@ public:
 		SourceLocation const& _location,
 		ASTPointer<ASTString> const& _docString,
 		ASTPointer<Expression> _expression,
-		std::vector<ASTPointer<Expression>> _options,
-		std::vector<ASTPointer<ASTString>> _names,
-		std::vector<langutil::SourceLocation> _nameLocations
+		std::vector<ASTPointer<Expression>> options,
+		std::vector<ASTPointer<ASTString>> names
 	): Statement(_id, _location, _docString), m_expression(std::move(_expression)),
-		   m_options(std::move(_options)), m_names(std::move(_names)), m_nameLocations(std::move(_nameLocations)) {}
+		   m_options(std::move(options)), m_names(std::move(names)) {}
 	void accept(ASTVisitor& _visitor) override;
 	void accept(ASTConstVisitor& _visitor) const override;
+
 	Expression const* expression() const { return m_expression.get(); }
 	const std::vector<ASTPointer<Expression>>& options() const { return m_options; }
 	const std::vector<ASTPointer<ASTString>>& names() const { return m_names; }
-	const std::vector<langutil::SourceLocation>& nameLocations() const { return m_nameLocations; }
 
 	ReturnAnnotation& annotation() const override;
 
@@ -2007,7 +2006,6 @@ private:
 	ASTPointer<Expression> m_expression; ///< value to return, optional
 	std::vector<ASTPointer<Expression>> m_options;
 	std::vector<ASTPointer<ASTString>> m_names;
-	std::vector<langutil::SourceLocation> m_nameLocations;
 };
 
 /**
@@ -2376,23 +2374,19 @@ public:
 	InitializerList(
 		int64_t _id,
 		SourceLocation const& _location,
-		std::vector<ASTPointer<Expression>> _options,
-		std::vector<ASTPointer<ASTString>> _names,
-		std::vector<langutil::SourceLocation> _nameLocations
+		std::vector<ASTPointer<Expression>> const& _options,
+		std::vector<ASTPointer<ASTString>> const& _names
 	):
-	Expression(_id, _location), m_options(std::move(_options)), m_names(std::move(_names)),
-		m_nameLocations(std::move(_nameLocations)) {}
+	Expression(_id, _location), m_options(_options), m_names(_names) {}
 	void accept(ASTVisitor& _visitor) override;
 	void accept(ASTConstVisitor& _visitor) const override;
 
 	std::vector<ASTPointer<Expression const>> options() const { return {m_options.begin(), m_options.end()}; }
 	std::vector<ASTPointer<ASTString>> const& names() const { return m_names; }
-	std::vector<langutil::SourceLocation> const& nameLocations() const { return m_nameLocations; }
 
 private:
 	std::vector<ASTPointer<Expression>> m_options;
 	std::vector<ASTPointer<ASTString>> m_names;
-	std::vector<langutil::SourceLocation> m_nameLocations;
 };
 
 

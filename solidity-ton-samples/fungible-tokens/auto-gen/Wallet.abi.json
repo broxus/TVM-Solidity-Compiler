@@ -1,0 +1,62 @@
+{
+	"ABI version": 2,
+	"version": "2.3",
+	"header": ["time"],
+	"functions": [
+		{
+			"name": "receiveJettons",
+			"id": "0x178D4519",
+			"inputs": [
+				{"name":"queryId","type":"uint64"},
+				{"name":"jettonAmount","type":"varuint16"},
+				{"name":"fromOwner","type":"address_std"},
+				{"name":"response","type":"address_std"},
+				{"name":"forwardTonAmount","type":"varuint16"},
+				{"name":"forwardPayload","type":"optional(cell)"}
+			],
+			"outputs": [
+			]
+		},
+		{
+			"name": "sendJettons",
+			"id": "0xF8A7EA5",
+			"inputs": [
+				{"name":"queryId","type":"uint64"},
+				{"name":"jettonAmount","type":"varuint16"},
+				{"name":"toOwner","type":"address_std"},
+				{"name":"response","type":"address_std"},
+				{"name":"customPayload","type":"optional(cell)"},
+				{"name":"forwardTonAmount","type":"varuint16"},
+				{"name":"forwardPayload","type":"optional(cell)"}
+			],
+			"outputs": [
+			]
+		}
+	],
+	"getters": [
+		{
+			"name": "get_wallet_data",
+			"inputs": [
+			],
+			"outputs": [
+				{"name":"_balance","type":"varuint16"},
+				{"name":"_owner","type":"address_std"},
+				{"name":"_jettonMaster","type":"address_std"},
+				{"name":"myCode","type":"cell"}
+			]
+		}
+	],
+	"data": [
+		{"key":1,"name":"owner","type":"address_std"},
+		{"key":2,"name":"jettonMaster","type":"address"}
+	],
+	"events": [
+	],
+	"fields": [
+		{"name":"_pubkey","type":"uint256"},
+		{"name":"_timestamp","type":"uint64"},
+		{"name":"balance","type":"varuint16"},
+		{"name":"owner","type":"address_std"},
+		{"name":"jettonMaster","type":"address"}
+	]
+}

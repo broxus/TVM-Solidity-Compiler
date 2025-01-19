@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2023 EverX. All Rights Reserved.
+ * Copyright (C) 2020-2024 EverX. All Rights Reserved.
  *
  * Licensed under the  terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License.
@@ -29,7 +29,8 @@ using namespace solidity::util;
 using namespace std;
 
 namespace {
-	string isNotSupportedVM = " is not supported by the VM version. See \"--tvm-version\" command-line option.";
+	string isNotSupportedVM = " is not supported by the VM version. Use \"--tvm-version\" command-line option to set "
+						   "correct TVM version.";
 }
 
 TVMTypeChecker::TVMTypeChecker(langutil::ErrorReporter& _errorReporter) :
@@ -390,7 +391,8 @@ void TVMTypeChecker::checkDeprecation(FunctionCall const& _functionCall) {
 	}
 }
 
-void TVMTypeChecker::checkSupport(FunctionCall const& _functionCall) {
+void TVMTypeChecker::checkSupport(FunctionCall const& _functionCall) const {
+	auto const& args =  _functionCall.arguments();
 	Type const* expressionType = _functionCall.expression().annotation().type;
 	switch (expressionType->category()) {
 	case Type::Category::Function: {
@@ -408,10 +410,28 @@ void TVMTypeChecker::checkSupport(FunctionCall const& _functionCall) {
 										  "\"tvm.initCodeHash()\"" + isNotSupportedVM);
 			}
 			break;
-		case FunctionType::Kind::TVMCode:
-			if (*GlobalParams::g_tvmVersion == TVMVersion::ton()) {
-				m_errorReporter.typeError(7632_error, _functionCall.location(),
-										  "\"tvm.code()\"" + isNotSupportedVM);
+		case FunctionType::Kind::GasConsumed:
+			if (*GlobalParams::g_tvmVersion != TVMVersion::ton()) {
+				m_errorReporter.typeError(9850_error, _functionCall.location(),
+										  "\"gasConsumed()\"" + isNotSupportedVM);
+			}
+			break;
+		case FunctionType::Kind::TonCombArithOper:
+			if (*GlobalParams::g_tvmVersion != TVMVersion::ton()) {
+				m_errorReporter.typeError(4802_error, _functionCall.location(),
+										  "Ton combined arithmetic operation" + isNotSupportedVM);
+			}
+			break;
+		case FunctionType::Kind::ValueToGas:
+			if (*GlobalParams::g_tvmVersion == TVMVersion::ton() && args.size() == 1) {
+				m_errorReporter.typeError(3014_error, _functionCall.location(),
+										  "\"valueToGas()\" with one argument" + isNotSupportedVM);
+			}
+			break;
+		case FunctionType::Kind::GasToValue:
+			if (*GlobalParams::g_tvmVersion == TVMVersion::ton() && args.size() == 1) {
+				m_errorReporter.typeError(8339_error, _functionCall.location(),
+										  "\"gasToValue()\" with one argument" + isNotSupportedVM);
 			}
 			break;
 		default:
@@ -467,7 +487,7 @@ bool TVMTypeChecker::visit(FunctionCall const& _functionCall) {
 					ABITypeSize size{structType};
 					if (size.maxBits > 1023 || size.maxRefs > 4)
 						m_errorReporter.warning(
-							3185_error, arg->location(),
+							228_error, arg->location(),
 							"The structure may not fit to the builder."
 							" Store manually structure's members to several builders."
 						);
@@ -539,6 +559,12 @@ bool TVMTypeChecker::visit(MemberAccess const& _memberAccess) {
 				if (*GlobalParams::g_tvmVersion == TVMVersion::ton()) {
 					m_errorReporter.typeError(3428_error, _memberAccess.location(),
 											  "\"tx.storageFee\"" + isNotSupportedVM);
+				}
+			}
+			if (member == "storageFees") {
+				if (*GlobalParams::g_tvmVersion != TVMVersion::ton()) {
+					m_errorReporter.typeError(5711_error, _memberAccess.location(),
+											  "\"tx.storageFees\"" + isNotSupportedVM);
 				}
 			}
 			break;

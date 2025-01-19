@@ -1,0 +1,22 @@
+{
+    "name": "solidity-ton-samples",
+    "version": "0.0.1",
+    "license": "GPL-3.0-only",
+    "private": true,
+    "workspaces": [
+        "counter",
+        "abi-test",
+        "fungible-tokens",
+        "common-utils",
+        "configs/**/*"
+    ],
+    "scripts": {
+        "build": "yarn workspaces run build",
+        "test": "yarn workspaces run test",
+        "build and test": "yarn build && yarn test",
+
+        "eslint:fix": "yarn workspaces run eslint:fix",
+        "prettier:fix": "yarn workspaces run prettier:fix",
+        "fix:code": "yarn eslint:fix && yarn prettier:fix"
+    }
+}

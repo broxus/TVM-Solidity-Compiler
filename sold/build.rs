@@ -36,20 +36,21 @@ fn full_lib_name(lib_name: &str, boost_lib_dir: &str) -> String {
     panic!();
 }
 
-// To debug this use command:
+// To debug this script use command:
 // cargo build -vv
 fn main() {
     println!("cargo:rerun-if-changed=../compiler/");
 
     let profile = std::env::var("PROFILE").unwrap();
-    let sol2tvm = if cfg!(target_os = "windows") {
-        cmake::Config::new("../compiler")
-            .define("BOOST_ROOT", absolute_path("../compiler/deps/boost/"))
-            .define("PEDANTIC", "OFF")
-            .define("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreaded")
-            .build()
-    } else {
-        cmake::Config::new("../compiler").build()
+    let sol2tvm = {
+        let mut config = cmake::Config::new("../compiler");
+        config.define("PEDANTIC", "OFF");
+        if cfg!(target_os = "windows") {
+            config
+                .define("BOOST_ROOT", absolute_path("../compiler/deps/boost/"))
+                .define("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreaded");
+        }
+        config.build()
     };
 
     for lib in ["solc", "solidity", "langutil", "solutil"] {

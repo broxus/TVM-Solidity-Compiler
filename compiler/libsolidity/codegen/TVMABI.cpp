@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2023 EverX. All Rights Reserved.
+ * Copyright (C) 2019-2024 EverX. All Rights Reserved.
  *
  * Licensed under the  terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License.
@@ -75,7 +75,7 @@ Json::Value TVMABI::generateFunctionIdsJson(
 Json::Value
 TVMABI::generatePrivateFunctionIdsJson(
 	ContractDefinition const& contract,
-	std::vector<std::shared_ptr<SourceUnit>> const& _sourceUnits,
+	std::vector<ASTPointer<SourceUnit>> const& _sourceUnits,
 	PragmaDirectiveHelper const& pragmaHelper
 ) {
 	Json::Value ids{Json::arrayValue};
@@ -95,7 +95,7 @@ TVMABI::generatePrivateFunctionIdsJson(
 
 Json::Value TVMABI::generateABIJson(
 	ContractDefinition const *contract,
-	std::vector<std::shared_ptr<SourceUnit>> const& _sourceUnits,
+	std::vector<ASTPointer<SourceUnit>> const& _sourceUnits,
 	std::vector<PragmaDirective const *> const &pragmaDirectives
 ) {
 	PragmaDirectiveHelper pdh{pragmaDirectives};
@@ -103,7 +103,7 @@ Json::Value TVMABI::generateABIJson(
 
 	Json::Value root(Json::objectValue);
 	root["ABI version"] = 2;
-	root["version"] = "2.7";
+	root["version"] = "2.3";
 
 	// header
 	{
@@ -174,6 +174,17 @@ Json::Value TVMABI::generateABIJson(
 		root["events"] = eventAbi;
 	}
 
+	// data
+	{
+		Json::Value data(Json::arrayValue);
+		for (const auto &[v, index] : ctx.getStaticVariables()) {
+			Json::Value cur = setupNameTypeComponents(v->name(), v->type());
+			cur["key"] = index;
+			data.append(cur);
+		}
+		root["data"] = data;
+	}
+
 	// fields
 	{
 		Json::Value fields(Json::arrayValue);
@@ -188,26 +199,11 @@ Json::Value TVMABI::generateABIJson(
 			Json::Value field(Json::objectValue);
 			field["name"] = name;
 			field["type"] = type;
-			field["init"] = name == "_pubkey";
 			fields.append(field);
 		}
 
-		std::vector<VariableDeclaration const *> stateVars = ctx.c4StateVariables();
-		std::set<std::string> usedNames;
-		std::vector<std::tuple<std::string, Type const*, bool>> namesTypes;
-		for (VariableDeclaration const * var : stateVars | boost::adaptors::reversed) {
-			std::string name = var->name();
-			if (usedNames.count(name) != 0)
-				name = var->annotation().contract->name() + "$" + var->name();
-			solAssert(usedNames.count(name) == 0, "");
-			usedNames.insert(name);
-			namesTypes.emplace_back(name, var->type(), var->isStatic());
-		}
-		std::reverse(namesTypes.begin(), namesTypes.end());
-
-		for (auto const&[name, type, isStatic] : namesTypes) {
-			Json::Value cur = setupNameTypeComponents(name, type);
-			cur["init"] = isStatic;
+		for (VariableDeclaration const* stateVar : ctx.c4StateVariables()) {
+			Json::Value cur = setupNameTypeComponents(stateVar->name(), stateVar->type());
 			fields.append(cur);
 		}
 		root["fields"] = fields;
@@ -232,7 +228,7 @@ Json::Value TVMABI::generateABIJson(
 
 void TVMABI::generateABI(
 	ContractDefinition const *contract,
-	std::vector<std::shared_ptr<SourceUnit>> const& _sourceUnits,
+	std::vector<ASTPointer<SourceUnit>> const& _sourceUnits,
 	std::vector<PragmaDirective const *> const &pragmaDirectives,
 	ostream *out
 ) {
@@ -266,6 +262,10 @@ void TVMABI::generateABI(
 
 	*out << "\t" << R"("getters": [)" << "\n";
 	print(root["getters"], out);
+	*out << "\t" << "],\n";
+
+	*out << "\t" << R"("data": [)" << "\n";
+	printData(root["data"], out);
 	*out << "\t" << "],\n";
 
 	*out << "\t" << R"("events": [)" << "\n";
@@ -473,9 +473,7 @@ Json::Value TVMABI::setupNameTypeComponents(const string &name, const Type *type
 		else if (category == Type::Category::VarInteger) {
 			auto varint = to<VarIntegerType>(type);
 			typeName = varint->toString(false);
-		} else if (auto* fixedBytesType = to<FixedBytesType>(type))
-			typeName = "fixedbytes" + toString(fixedBytesType->numBytes());
-		else if (ti.isNumeric) {
+		} else if (ti.isNumeric) {
 			if (to<BoolType>(type)) {
 				typeName = "bool";
 			} else if (ti.isSigned) {

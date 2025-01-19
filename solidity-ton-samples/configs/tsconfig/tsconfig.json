@@ -1,0 +1,55 @@
+{
+    "compilerOptions": {
+        "allowSyntheticDefaultImports": true,
+        "experimentalDecorators": true,
+        "emitDecoratorMetadata": true,
+        "resolveJsonModule": true,
+        "composite": false,
+        "allowUnreachableCode": false,
+        "allowUnusedLabels": false,
+        "esModuleInterop": true,
+        "exactOptionalPropertyTypes": true,
+        "forceConsistentCasingInFileNames": true,
+        "ignoreDeprecations": "5.0", // temporary silent "importsNotUsedAsValues" option warning
+        "importsNotUsedAsValues": "error",
+        "isolatedModules": true,
+        "jsx": "react-jsx",
+        "lib": ["es2020", "dom", "esnext"],
+        "module": "commonjs",
+        "moduleResolution": "node",
+        "noEmit": true,
+        "noFallthroughCasesInSwitch": true,
+        "noImplicitReturns": true,
+        "noImplicitUseStrict": false,
+        "noStrictGenericChecks": false,
+        "noUncheckedIndexedAccess": true,
+        "noUnusedLocals": null,
+        "noUnusedParameters": null,
+        "skipLibCheck": true,
+        "strict": true,
+        "target": "es2020",
+        "useUnknownInCatchVariables": false,
+        "typeRoots": [
+            // Include all packages under "@types/",
+            // which should be included automatically
+            // but only in case the "typeRoots" property is not specified
+            // See: https://www.typescriptlang.org/tsconfig#typeRoots
+            "./node_modules/@types",
+            "../node_modules/@types",
+            "../../node_modules/@types",
+            "../../../node_modules/@types",
+
+            // Include the following to work with "tronweb"
+            "./node_modules/@daochild/tronweb-typescript",
+            "../node_modules/@daochild/tronweb-typescript",
+            "../../node_modules/@daochild/tronweb-typescript",
+            "../../../node_modules/@daochild/tronweb-typescript"
+        ]
+    },
+    "ts-node": {
+        "compilerOptions": {
+            "module": "CommonJS"
+        }
+    },
+    "include": ["**/*.ts", "**/*.tsx", "**/*.json"]
+}

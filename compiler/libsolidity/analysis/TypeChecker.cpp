@@ -36,7 +36,7 @@
 
 #include <boost/algorithm/string/join.hpp>
 #include <boost/algorithm/string/predicate.hpp>
-#include  <boost/core/ignore_unused.hpp>
+#include <boost/core/ignore_unused.hpp>
 
 #include <fmt/format.h>
 
@@ -48,8 +48,8 @@
 #include <memory>
 #include <vector>
 
-#include <libsolidity/codegen/TVMCommons.hpp>
-#include <libsolidity/codegen/TVMConstants.hpp>
+#include "../codegen/TVMCommons.hpp"
+#include "../codegen/TVMConstants.hpp"
 
 using namespace solidity;
 using namespace solidity::util;
@@ -292,40 +292,49 @@ void TypeChecker::typeCheckABIEncodeStateInit(
 		bool hasPubkey = hasName("pubkey");
 		bool hasContr = hasName("contr");
 
-		if (!hasCode)
+		if (!hasCode) {
 			m_errorReporter.typeError(
 				6128_error,
 				_functionCall.location(),
 				std::string("Parameter \"code\" must be set.")
 			);
-		if (hasData && (hasVarInit || hasPubkey))
+		}
+		if (hasData && (hasVarInit || hasPubkey)) {
 			m_errorReporter.typeError(
 				6578_error,
 				_functionCall.location(),
 				std::string(R"(Parameter "data" can't be specified with "pubkey" or "varInit".)")
 			);
-		if (!hasContr && !hasData)
+		}
+		if (hasVarInit != hasContr) {
 			m_errorReporter.typeError(
 				8123_error,
 				_functionCall.location(),
 				std::string(R"(Expected parameter "contr" or "data".)")
 			);
+		}
+
 		if (hasContr) {
 			int contrInd = findName("contr");
 			const ASTPointer<Expression const>& contrArg = args.at(contrInd);
 			ContractType const* ct = getContractType(contrArg.get());
 			if (ct == nullptr) {
 				m_errorReporter.typeError(
-					8286_error,
-					contrArg->location(),
-					"Expected contract type."
+						8286_error,
+						contrArg->location(),
+						"Expected contract type."
 				);
-				return ;
+				return;
 			}
-			InitializerList const * list{};
 			int varInitInd = findName("varInit");
-			if (varInitInd != -1)
-				list = dynamic_cast<InitializerList const *>(args.at(varInitInd).get());
+			if (varInitInd == -1) {
+				return;
+			}
+			auto list = dynamic_cast<InitializerList const *>(args.at(varInitInd).get());
+			if (!list) {
+				// It's checked in typeCheckFunctionCall function
+				return;
+			}
 			checkInitList(list, *ct, _functionCall.location());
 		}
 	}
@@ -336,35 +345,45 @@ void TypeChecker::typeCheckABIEncodeData(
 	const std::function<bool(const std::string&)>& hasName,
 	const std::function<int(const std::string&)>& findName
 ) {
+	bool hasNames = !_functionCall.names().empty();
 	const std::vector<ASTPointer<const Expression>> &args = _functionCall.arguments();
 
-	if (!hasName("contr")) {
-		m_errorReporter.typeError(
-			2957_error,
-			_functionCall.location(),
-			std::string(R"(Expected parameter "contr".)")
-		);
-		return ;
-	}
+	if (hasNames) {
+		bool hasVarInit = hasName("varInit");
+		bool hasContr = hasName("contr");
 
-	int contrInd = findName("contr");
-	const ASTPointer<Expression const>& contrArg = args.at(contrInd);
-	ContractType const* ct = getContractType(contrArg.get());
-	if (ct == nullptr) {
-		m_errorReporter.typeError(
-			9417_error,
-			contrArg->location(),
-			"Expected contract type."
-		);
-		return;
-	}
+		if (hasVarInit != hasContr) {
+			m_errorReporter.typeError(
+				2957_error,
+				_functionCall.location(),
+				std::string(R"(Parameter "varInit" requires parameter "contr" and there is no need in "contr" without "varInit".)")
+			);
+		}
 
-	InitializerList const * list{};
-	int varInitInd = findName("varInit");
-	if (varInitInd != -1) {
-		list = dynamic_cast<InitializerList const *>(args.at(varInitInd).get());
+		if (hasContr) {
+			int contrInd = findName("contr");
+			const ASTPointer<Expression const>& contrArg = args.at(contrInd);
+			ContractType const* ct = getContractType(contrArg.get());
+			if (ct == nullptr) {
+				m_errorReporter.typeError(
+						9417_error,
+						contrArg->location(),
+						"Expected contract type."
+				);
+				return;
+			}
+			int varInitInd = findName("varInit");
+			if (varInitInd == -1) {
+				return;
+			}
+			auto list = dynamic_cast<InitializerList const *>(args.at(varInitInd).get());
+			if (!list) {
+				// It's checked in typeCheckFunctionCall function
+				return;
+			}
+			checkInitList(list, *ct, _functionCall.location());
+		}
 	}
-	checkInitList(list, *ct, _functionCall.location());
 }
 
 void TypeChecker::typeCheckCallBack(FunctionType const* remoteFunction, Expression const& option) {
@@ -2271,7 +2290,7 @@ void TypeChecker::checkNeedCallback(FunctionType const* callee, ASTNode const& n
 			m_errorReporter.typeError(
 					9205_error,
 					node.location(),
-					SecondarySourceLocation().append("The declaration is here:", funcDef->location()),
+					SecondarySourceLocation().append("Declaration is here:", funcDef->location()),
 					R"("callback" option must be set because callee function is marked as responsible.)"
 			);
 		}
@@ -3031,7 +3050,6 @@ void TypeChecker::typeCheckFunctionGeneralChecks(
 					};
 				else if (
 					_functionType->kind() == FunctionType::Kind::KECCAK256 ||
-					_functionType->kind() == FunctionType::Kind::SHA256 ||
 					_functionType->kind() == FunctionType::Kind::RIPEMD160
 				)
 					return {
@@ -3155,7 +3173,7 @@ TypeChecker::checkPubFunctionAndGetDefinition(Expression const& arg, bool printE
 			m_errorReporter.fatalTypeError(
 					6273_error,
 					arg.location(),
-					SecondarySourceLocation().append("The declaration is here:", funcDef->location()),
+					SecondarySourceLocation().append("Declaration is here:", funcDef->location()),
 					"Public/external function or contract type required, but \"" +
 					Declaration::visibilityToString(funcDef->visibility()) +
 					"\" function is provided."
@@ -3230,17 +3248,6 @@ void TypeChecker::checkInitList(InitializerList const* list, ContractType const&
 	std::map<std::string, size_t> usedNamedParams;
 	for (size_t i = 0; i < list->names().size(); ++i) {
 		const std::string name = *list->names().at(i);
-		if (usedNamedParams.count(name) != 0) {
-			size_t prevIndex = usedNamedParams.at(name);
-			m_errorReporter.typeError(
-				4019_error,
-				list->nameLocations().at(i),
-				SecondarySourceLocation()
-						.append("Previous named argument is here:", list->nameLocations().at(prevIndex)),
-				"Duplicate named argument \"" + name + "\"."
-			);
-		}
-		usedNamedParams[name] = i;
 		Type const* exprType = list->options().at(i)->annotation().type;
 		size_t j;
 		for (j = 0; j < stateVariables.size(); ++j) {
@@ -3248,11 +3255,11 @@ void TypeChecker::checkInitList(InitializerList const* list, ContractType const&
 			if (name == v->name()) {
 				if (!v->isStatic()) {
 					m_errorReporter.typeError(
-						6626_error,
-						list->nameLocations().at(i),
-						SecondarySourceLocation()
-								.append("The declaration is here:", v->location()),
-						"Initialization of a non-static variable."
+							6626_error,
+							list->options().at(i)->location(),
+							SecondarySourceLocation()
+									.append("Declaration is here:", v->location()),
+							"Initialization of a non-static variable."
 					);
 				} else if (!exprType->isImplicitlyConvertibleTo(*v->type())) {
 					m_errorReporter.typeError(
@@ -3268,22 +3275,10 @@ void TypeChecker::checkInitList(InitializerList const* list, ContractType const&
 		if (j == stateVariables.size()) {
 			m_errorReporter.typeError(
 				6711_error,
-				list->nameLocations().at(i),
+				list->options().at(i)->location(),
 				SecondarySourceLocation()
-						.append("The contract is here:", ct.contractDefinition().location()),
+						.append("Contract is here:", ct.contractDefinition().location()),
 				"Unknown state variable \"" + name + "\"."
-			);
-		}
-	}
-
-	for (VariableDeclaration const* v : stateVariables) {
-		if (v->isStatic() && usedNamedParams.count(v->name()) == 0) {
-			m_errorReporter.typeError(
-				6515_error,
-				list->location(),
-				SecondarySourceLocation()
-						.append("The declaration of state static variable is here:", v->location()),
-				"Expected named argument \"" + v->name() + "\" in the list. All static state variables should be defined."
 			);
 		}
 	}
@@ -3315,7 +3310,7 @@ void TypeChecker::checkCallList(
 					5424_error,
 					_functionCall.location(),
 					SecondarySourceLocation()
-							.append("The declaration is here:", functionDeclaration->location()),
+							.append("Declaration is here:", functionDeclaration->location()),
 					"Wrong arguments count: " +
 					toString(arguments.size()) +
 					" arguments given but expected " +
@@ -3341,7 +3336,7 @@ void TypeChecker::checkCallList(
 			m_errorReporter.fatalTypeError(
 					2182_error,
 					_functionCall.location(),
-					SecondarySourceLocation().append("The declaration is here:",
+					SecondarySourceLocation().append("Declaration is here:",
 													 contractDefinition.location()),
 					"Wrong arguments count: " +
 					toString(arguments.size()) +
@@ -3659,7 +3654,7 @@ bool TypeChecker::visit(FunctionCall const& _functionCall)
 		return findName(optName) != -1;
 	};
 
-	auto checkHasNamedParams = [&]() {
+	auto checkHaveNamedParams = [&]() {
 		if (argumentNames.empty())
 			m_errorReporter.fatalTypeError(
 				8461_error,
@@ -4098,7 +4093,7 @@ bool TypeChecker::visit(FunctionCall const& _functionCall)
 			break;
 		}
 		case FunctionType::Kind::ABIEncodeIntMsg: {
-			checkHasNamedParams();
+			checkHaveNamedParams();
 
 			for (const std::string name : {"dest", "call", "value"}) {
 				int index = findName(name);
@@ -4138,8 +4133,9 @@ bool TypeChecker::visit(FunctionCall const& _functionCall)
 			typeCheckABIEncodeStateInit(_functionCall, hasName, findName);
 			break;
 		}
+
 		case FunctionType::Kind::ABIEncodeData: {
-			checkHasNamedParams();
+			checkHaveNamedParams();
 			typeCheckFunctionCall(_functionCall, functionType);
 			returnTypes = m_evmVersion.supportsReturndata() ?
 						  functionType->returnParameterTypes() :
@@ -4224,15 +4220,51 @@ bool TypeChecker::visit(FunctionCall const& _functionCall)
 			break;
 		}
 		case FunctionType::Kind::SHA256: {
-			if (arguments.size() != 1)
-				m_errorReporter.fatalTypeError(3449_error, _functionCall.location(), "Expected one argument.");
-
-			Type const* argType = arguments.at(0)->annotation().type->mobileType();
-			auto arrayType = dynamic_cast<ArrayType const *>(argType);
-			if (!((arrayType && arrayType->isByteArrayOrString()) || dynamic_cast<TvmSliceType const*>(argType)))
-				m_errorReporter.fatalTypeError(7972_error, arguments.at(0)->location(), "Expected bytes, string or TvmSlice type.");
-			paramTypes.push_back(argType);
-			returnTypes.emplace_back(TypeProvider::uint256());
+			if (arguments.size() == 1) {
+				Type const* argType = arguments.at(0)->annotation().type->mobileType();
+				auto arrayType = dynamic_cast<ArrayType const *>(argType);
+				if (!((arrayType && arrayType->isByteArrayOrString()) || dynamic_cast<TvmSliceType const*>(argType)))
+					m_errorReporter.fatalTypeError(7972_error, arguments.at(0)->location(), "Expected bytes, string or TvmSlice type.");
+				paramTypes.push_back(argType);
+				returnTypes.emplace_back(TypeProvider::uint256());
+			} else {
+				for (const auto & argument : arguments) {
+					auto argType = type(*argument);
+					auto argCat = argType->category();
+					if (argCat != Type::Category::TvmSlice) {
+						m_errorReporter.fatalTypeError(4067_error, argument->location(), "Expected TvmSlice type.");
+					}
+					paramTypes.emplace_back(argType);
+				}
+				returnTypes.emplace_back(TypeProvider::uint256());
+			}
+			break;
+		}
+		case FunctionType::Kind::HashExt: {
+			for (const auto & argument : arguments) {
+				auto argType = type(*argument);
+				auto argCat = argType->category();
+				if (argCat != Type::Category::TvmSlice) {
+					m_errorReporter.fatalTypeError(7621_error, argument->location(), "Expected TvmSlice type.");
+				}
+				paramTypes.emplace_back(argType);
+			}
+			auto const& name = to<Identifier>(&_functionCall.expression())->name();
+			if (isIn(name, "sha512", "blake2b", "keccak512"))
+				returnTypes.emplace_back(TypeProvider::tvmVector(TypeProvider::uint256()));
+			else
+				returnTypes.emplace_back(TypeProvider::uint256());
+			break;
+		}
+		case FunctionType::Kind::TVMBuilderHash: {
+			for (const auto & argument : arguments) {
+				auto argType = type(*argument);
+				auto argCat = argType->category();
+				if (argCat != Type::Category::TvmSlice) {
+					m_errorReporter.fatalTypeError(3633_error, argument->location(), "Expected TvmSlice type.");
+				}
+				paramTypes.emplace_back(argType);
+			}
 			break;
 		}
 		case FunctionType::Kind::Require: {
@@ -4543,15 +4575,14 @@ bool TypeChecker::visit(FunctionCallOptions const& _functionCallOptions)
 				R"(Option "varInit" is not compatible with option "stateInit". Only with option "code".)"
 			);
 		}
-		if (setValue == -1)
+		if (setValue == -1) {
 			m_errorReporter.typeError(4337_error, _functionCallOptions.location(), R"(Option "value" must be set.)");
-		if (setStateInit == -1) {
+		}
+		if (setVarInit != -1) {
 			auto newExpr = to<NewExpression>(&_functionCallOptions.expression());
 			Type const* type = newExpr->typeName().annotation().type;
 			auto ct = to<ContractType>(type);
-			InitializerList const* list{};
-			if (setVarInit != -1)
-				list = dynamic_cast<InitializerList const*>(options.at(setVarInit).get());
+			auto list = dynamic_cast<InitializerList const*>(options.at(setVarInit).get());
 			checkInitList(list, *ct, _functionCallOptions.location());
 		}
 	}
@@ -4789,7 +4820,7 @@ bool TypeChecker::visit(MemberAccess const& _memberAccess)
 		)
 			annotation.isPure = true;
 		else if (tt->actualType()->category() == Type::Category::Address) {
-			if (memberName == "makeAddrStd" || memberName == "addrNone" || memberName == "makeAddrExtern") {
+			if (memberName == "makeAddrStd" || memberName == "makeAddrNone") {
 				annotation.isPure = true;
 			}
 		}

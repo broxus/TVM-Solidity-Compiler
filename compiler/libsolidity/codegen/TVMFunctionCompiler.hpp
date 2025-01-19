@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2023 EverX. All Rights Reserved.
+ * Copyright (C) 2019-2024 EverX. All Rights Reserved.
  *
  * Licensed under the  terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License.
@@ -24,9 +24,9 @@ class PublicFunctionSelector;
 
 class TVMFunctionCompiler: public ASTConstVisitor, private boost::noncopyable
 {
-protected:
-	TVMFunctionCompiler(StackPusher& pusher, ContractDefinition const *contract);
 private:
+	TVMFunctionCompiler(StackPusher& pusher, ContractDefinition const *contract);
+
 	TVMFunctionCompiler(
 		StackPusher& pusher,
 		int modifier,
@@ -39,7 +39,7 @@ private:
 public:
 	static Pointer<Function> updateOnlyTime(TVMCompilerContext& ctx);
 	static Pointer<Function> generateC4ToC7(TVMCompilerContext& ctx);
-	static Pointer<Function> generateDefaultC4(TVMCompilerContext& ctx);
+	static Pointer<Function> generateC4ToC7WithInitMemory(TVMCompilerContext& ctx);
 	static Pointer<Function> generateBuildTuple(TVMCompilerContext& ctx, std::string const& name, const std::vector<Type const*>& types);
 	static Pointer<Function> generateNewArrays(TVMCompilerContext& ctx, std::string const& name, FunctionCall const* arr);
 	static Pointer<Function> generateConstArrays(TVMCompilerContext& ctx, std::string const& name, TupleExpression const* arr);
@@ -142,21 +142,6 @@ private:
 	ContractDefinition const *m_contract{};
 	const bool m_isLibraryWithObj{};
 	const bool m_pushArgs{};
-};
-
-class TVMConstructorCompiler: public TVMFunctionCompiler {
-	StackPusher& m_pusher;
-	std::map<ContractDefinition const*, std::vector<ContractDefinition const*>> path;
-	std::vector<ContractDefinition const*> dfsOrder;
-	std::map<ContractDefinition const*, bool> used;
-	std::map<ContractDefinition const*, std::vector<ASTPointer<Expression>> const*> m_args;
-
-public:
-	explicit TVMConstructorCompiler(StackPusher& pusher);
-	void dfs(ContractDefinition const* c);
-	Pointer<Function> generateConstructors();
-private:
-	void beginConstructor();
 };
 
 class PublicFunctionSelector {

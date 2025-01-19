@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2023 EverX. All Rights Reserved.
+ * Copyright (C) 2020-2024 EverX. All Rights Reserved.
  *
  * Licensed under the  terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License.
@@ -14,7 +14,7 @@
  * Expression compiler for TVM
  */
 
-#include  <boost/core/ignore_unused.hpp>
+#include <boost/core/ignore_unused.hpp>
 
 #include <liblangutil/SourceReferenceExtractor.h>
 
@@ -774,11 +774,16 @@ void TVMExpressionCompiler::visitMsgMagic(MemberAccess const &_node) {
 	if (_node.memberName() == "sender") { // msg.sender
 		m_pusher.getGlob(TvmConst::C7::SenderAddress);
 	} else if (_node.memberName() == "value") { // msg.value
-		m_pusher.push(createNode<HardCode>(std::vector<std::string>{
-			"DEPTH",
-			"ADDCONST -2",
-			"PICK",
-		}, 0, 1, true));
+		if (*GlobalParams::g_tvmVersion == TVMVersion::ton()) {
+			m_pusher.push("INCOMINGVALUE");
+			m_pusher.indexNoexcep(0);
+		} else {
+			m_pusher.push(createNode<HardCode>(std::vector<std::string>{
+				"DEPTH",
+				"ADDCONST -2",
+				"PICK",
+			}, 0, 1, true));
+		}
 	} else if (_node.memberName() == "data") { // msg.data
 		m_pusher.push(createNode<HardCode>(std::vector<std::string>{
 			"DEPTH",
@@ -912,7 +917,7 @@ void TVMExpressionCompiler::visitMagic(MemberAccess const &_memberAccess) {
 	};
 
 	Type const* exprType = _memberAccess.expression().annotation().type;
-	auto magicType = to<MagicType>(exprType);
+	auto magicType = dynamic_cast<MagicType const*>(exprType);
 	ASTString const& member = _memberAccess.memberName();
 
 	switch (magicType->kind()) {
@@ -924,6 +929,8 @@ void TVMExpressionCompiler::visitMagic(MemberAccess const &_memberAccess) {
 			m_pusher << "LTIME";
 		} else if (member == "storageFee") {
 			m_pusher << "STORAGEFEE";
+		} else if (member == "storageFees") {
+			m_pusher << "STORAGEFEES";
 		} else {
 			unsupportedMagic();
 		}
@@ -941,10 +948,10 @@ void TVMExpressionCompiler::visitMagic(MemberAccess const &_memberAccess) {
 	}
 	case MagicType::Kind::MetaType: {
 		if (member == "min" || member == "max") {
-			auto const* arg = to<MagicType>(_memberAccess.expression().annotation().type);
+			auto const* arg = dynamic_cast<MagicType const*>(_memberAccess.expression().annotation().type);
 			string opcode = "PUSHINT ";
 			const Type *argType = arg->typeArgument();
-			if (auto const* integerType = to<IntegerType>(argType))
+			if (auto const* integerType = dynamic_cast<IntegerType const*>(argType))
 				opcode += toString(member == "min" ? integerType->minValue() : integerType->maxValue());
 			else if (auto const* varint = to<VarIntegerType>(argType))
 				opcode += toString(member == "min" ? varint->asIntegerType().minValue() : varint->asIntegerType().maxValue());
@@ -1004,8 +1011,9 @@ void TVMExpressionCompiler::visit2(MemberAccess const &_node) {
 			m_pusher << "PUSHINT " + toString(value);
 			return;
 		}
-		auto conType = to<ContractType>(actualType);
-		if (conType != nullptr && conType->contractDefinition().isLibrary()) {
+
+		auto conType = to<ContractType>(typeType->actualType());
+		if (conType->contractDefinition().isLibrary()) {
 			auto funType = to<FunctionType>(_node.annotation().type);
 			if (funType) {
 				auto funDef = to<FunctionDefinition>(&funType->declaration());
@@ -1013,9 +1021,11 @@ void TVMExpressionCompiler::visit2(MemberAccess const &_node) {
 				return ;
 			}
 		}
+
 		if (fold_constants(&_node)) {
 			return;
 		}
+
 		if (tryPushConstant(_node.annotation().referencedDeclaration)) {
 			return;
 		}
@@ -1340,8 +1350,7 @@ void
 TVMExpressionCompiler::collectLValue(
 	const LValueInfo &lValueInfo,
 	const bool haveValueOnStackTop
-)
-{
+) const {
 	// variable [arrayIndex | mapIndex | structMember | <optional>.get()]...
 
 	const int n = static_cast<int>(lValueInfo.expressions.size());
@@ -1402,7 +1411,10 @@ TVMExpressionCompiler::collectLValue(
 			const string &memberName = memberAccess->memberName();
 			structCompiler.setMemberForTuple(memberName);
 		} else if (isOptionalGet(lValueInfo.expressions[i])) {
-			// do nothing
+			m_pusher.convert(
+				lValueInfo.expressions[i - 1]->annotation().type, // optional(T)
+				lValueInfo.expressions[i]->annotation().type      // T
+			);
 		} else if (isStackTop(lValueInfo.expressions[i])) {
 			// stack value
 			m_pusher.blockSwap(1, 1); // value stack

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2023 EverX. All Rights Reserved.
+ * Copyright (C) 2020-2024 EverX. All Rights Reserved.
  *
  * Licensed under the  terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License.
@@ -31,6 +31,15 @@ bool TVMAnalyzer::analyze(const SourceUnit &_sourceUnit)
 {
 	_sourceUnit.accept(*this);
 	return !m_errorReporter.hasErrors();
+}
+
+bool TVMAnalyzer::visit(RevertStatement const& _revertStatement) {
+	m_errorReporter.typeError(
+		1594_error,
+		_revertStatement.location(),
+		"Revert statements are not supported currently."
+	);
+	return true;
 }
 
 bool TVMAnalyzer::visit(MemberAccess const& _node) {

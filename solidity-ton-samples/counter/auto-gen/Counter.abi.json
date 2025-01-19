@@ -1,0 +1,54 @@
+{
+	"ABI version": 2,
+	"version": "2.3",
+	"header": ["time", "expire"],
+	"functions": [
+		{
+			"name": "inc",
+			"inputs": [
+			],
+			"outputs": [
+			]
+		},
+		{
+			"name": "grant",
+			"inputs": [
+				{"name":"user","type":"address"},
+				{"name":"value","type":"uint256"}
+			],
+			"outputs": [
+			]
+		}
+	],
+	"getters": [
+		{
+			"name": "getCount",
+			"inputs": [
+				{"name":"user","type":"address"}
+			],
+			"outputs": [
+				{"name":"qty","type":"uint256"}
+			]
+		},
+		{
+			"name": "getIsAllowed",
+			"inputs": [
+				{"name":"user","type":"address"}
+			],
+			"outputs": [
+				{"name":"value0","type":"bool"}
+			]
+		}
+	],
+	"data": [
+		{"key":1,"name":"isAllowed","type":"map(address,bool)"}
+	],
+	"events": [
+	],
+	"fields": [
+		{"name":"_pubkey","type":"uint256"},
+		{"name":"_timestamp","type":"uint64"},
+		{"name":"isAllowed","type":"map(address,bool)"},
+		{"name":"count","type":"map(address,uint256)"}
+	]
+}
