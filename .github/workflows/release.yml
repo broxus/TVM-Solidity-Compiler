@@ -1,0 +1,162 @@
+name: Release Build and Publish
+on:
+  push:
+    tags:
+      - 'v*' # Trigger on version tags like v0.1.0, v1.0.0, etc.
+
+env:
+  RELEASE_BIN: sold
+  CARGO_TARGET_DIR: target/release
+  RELEASE_ADDS: README.md
+
+jobs:
+  build:
+    name: Build Artifacts (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false # Allow other jobs to continue if one fails
+      matrix:
+        include:
+          - os: ubuntu-latest
+            archive_ext: tar.gz
+            install_script: ./compiler/scripts/install_deps.sh
+          - os: macos-latest
+            archive_ext: tar.gz
+            install_script: ./compiler/scripts/install_deps.sh
+          - os: windows-latest
+            archive_ext: zip
+            install_script: ./compiler/scripts/install_deps.ps1
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive' # Important if the project uses git submodules
+
+      - name: Get version from tag
+        id: get_version
+        shell: bash
+        run: |
+          # Strip 'refs/tags/' prefix
+          VERSION_TAG="${GITHUB_REF#refs/tags/}"
+          echo "Using version tag: $VERSION_TAG"
+          echo "version=$VERSION_TAG" >> $GITHUB_OUTPUT
+
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          working-directory: sold
+
+      - name: Install build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y p7zip-full # For packaging
+          # Run the project's dependency script
+          sudo bash ${{ matrix.install_script }}
+
+      - name: Install build dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install p7zip # For packaging
+          # Run the project's dependency script
+          bash ${{ matrix.install_script }}
+
+      - name: Install build dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh # Use PowerShell
+        run: |
+          # Install 7zip using Chocolatey (common on GitHub Actions Windows runners)
+          choco install 7zip.install --no-progress -y
+          # Add 7zip to PATH (adjust path if needed)
+          echo "C:\Program Files\7-Zip" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          # Run the project's dependency script
+          .\${{ matrix.install_script }}
+
+      - name: Build Rust Binary (${{ env.RELEASE_BIN }})
+        shell: bash # Use bash for consistency, even on Windows via Git Bash
+        run: |
+          # Build from the workspace root
+          cargo build --release
+
+      - name: Package Artifact
+        shell: bash # Use bash for consistency
+        run: |
+          # Create a staging directory
+          mkdir staging
+          # Define binary path and name
+          BIN_NAME="${{ env.RELEASE_BIN }}"
+          SOURCE_BIN_PATH="./${{ env.CARGO_TARGET_DIR }}/${BIN_NAME}"
+          TARGET_BIN_PATH="./staging/${BIN_NAME}"
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            SOURCE_BIN_PATH="${SOURCE_BIN_PATH}.exe"
+            TARGET_BIN_PATH="${TARGET_BIN_PATH}.exe"
+          fi
+          # Copy binary and additional files
+          cp "${SOURCE_BIN_PATH}" "${TARGET_BIN_PATH}"
+          # Handle potential multiple files in RELEASE_ADDS
+          for file_to_add in ${{ env.RELEASE_ADDS }}; do
+            cp "$file_to_add" ./staging/
+          done
+          # Create archive name
+          ARTIFACT_NAME="${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.version }}-${{ runner.os }}.${{ matrix.archive_ext }}"
+          # Create the archive
+          pushd staging
+          if [[ "${{ matrix.archive_ext }}" == "zip" ]]; then
+            7z a -tzip ../"${ARTIFACT_NAME}" *
+          else
+            # Use tar piped to 7z for .tar.gz for better compatibility/permissions
+            7z a -ttar -so -an * | 7z a -si ../"${ARTIFACT_NAME}"
+          fi
+          popd
+          echo "ARTIFACT_PATH=${ARTIFACT_NAME}" >> $GITHUB_ENV
+          echo "Created ${ARTIFACT_NAME}"
+
+      - name: List Staging Contents (Debug)
+        run: ls -R staging
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ runner.os }}-artifact # Unique name per OS
+          path: ${{ env.ARTIFACT_PATH }}
+          retention-days: 7 # Keep artifacts for a week
+
+  release:
+    name: Create GitHub Release
+    needs: build # Run after the build job matrix completes successfully
+    runs-on: ubuntu-latest # Release creation can run on Linux
+    permissions:
+      contents: write # Needed to create releases and upload assets
+    steps:
+      - name: Get version from tag
+        id: get_version
+        shell: bash
+        run: |
+          VERSION_TAG="${GITHUB_REF#refs/tags/}"
+          echo "Using version tag: $VERSION_TAG"
+          echo "version=$VERSION_TAG" >> $GITHUB_OUTPUT
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts # Download all artifacts into an 'artifacts' directory
+
+      - name: List downloaded files
+        run: ls -R artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.get_version.outputs.version }}
+          name: Release ${{ steps.get_version.outputs.version }}
+          body: | 
+            Release of version ${{ steps.get_version.outputs.version }}
+          files: |
+            artifacts/Linux-artifact/${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.version }}-Linux.tar.gz
+            artifacts/macOS-artifact/${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.version }}-macOS.tar.gz
+            artifacts/Windows-artifact/${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.version }}-Windows.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
