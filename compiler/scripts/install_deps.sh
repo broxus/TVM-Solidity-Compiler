@@ -74,7 +74,8 @@ case $(uname -s) in
         # Check for Homebrew install and abort if it is not installed.
         brew -v > /dev/null 2>&1 || { echo >&2 "ERROR - solidity requires a Homebrew install.  See https://brew.sh."; exit 1; }
         brew update
-        brew install boost
+        # Use Homebrew's Boost, which includes Boost.Process
+        brew list boost >/dev/null 2>&1 || brew install boost
         brew install cmake
         brew install curl
         if [ "$CI" = true ]; then
