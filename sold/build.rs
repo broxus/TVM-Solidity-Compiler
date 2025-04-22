@@ -74,6 +74,12 @@ fn main() {
             get_absolute_path(&boost_root_dir).expect("Failed to get absolute path for Boost root");
         config.define("BOOST_ROOT", absolute_boost_root);
         config.define("PEDANTIC", "OFF");
+        // Explicitly request the static multithreaded runtime library.
+        // Uses CMake generator expression to select MT for Release and MTd for Debug.
+        config.define(
+            "CMAKE_MSVC_RUNTIME_LIBRARY",
+            "MultiThreaded$<$<CONFIG:Debug>:Debug>",
+        );
     }
 
     let dst = config.build();
@@ -100,13 +106,32 @@ fn main() {
         println!("cargo:rustc-link-lib=static={}", boost_fs_lib);
     } else {
         if cfg!(target_os = "macos") {
-            match env::var("HOMEBREW_PREFIX") {
-                Ok(brew_prefix) => {
-                    println!("cargo:rustc-link-search=native={}/lib", brew_prefix);
+            let mut boost_lib_path_found = false;
+            if let Ok(boost_root_env) = env::var("BOOST_ROOT") {
+                let boost_lib_dir = PathBuf::from(&boost_root_env).join("lib");
+                if boost_lib_dir.exists() {
+                    println!("cargo:rustc-link-search=native={}", boost_lib_dir.display());
+                    println!(
+                        "build.rs: Added BOOST_ROOT/lib to link search path: {}",
+                        boost_lib_dir.display()
+                    );
+                    boost_lib_path_found = true;
+                } else {
+                    println!("build.rs: BOOST_ROOT environment variable was set to '{}', but '{}' does not exist.", boost_root_env, boost_lib_dir.display());
                 }
-                Err(_) => {
-                    println!("cargo:rustc-link-search=native=/opt/homebrew/lib");
-                    println!("cargo:rustc-link-search=native=/usr/local/lib");
+            }
+
+            if !boost_lib_path_found {
+                // Fallback to Homebrew if BOOST_ROOT didn't yield a valid path
+                println!("build.rs: BOOST_ROOT not found or invalid, falling back to Homebrew paths for Boost.");
+                match env::var("HOMEBREW_PREFIX") {
+                    Ok(brew_prefix) => {
+                        println!("cargo:rustc-link-search=native={}/lib", brew_prefix);
+                    }
+                    Err(_) => {
+                        println!("cargo:rustc-link-search=native=/opt/homebrew/lib");
+                        println!("cargo:rustc-link-search=native=/usr/local/lib");
+                    }
                 }
             }
         } else if cfg!(target_os = "freebsd") {

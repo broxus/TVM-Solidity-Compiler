@@ -46,6 +46,7 @@
 
 set -e
 
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 # Check for 'uname' and abort if it is not available.
 uname -v > /dev/null 2>&1 || { echo >&2 "ERROR - solidity requires 'uname' to identify the platform."; exit 1; }
 
@@ -71,18 +72,14 @@ case $(uname -s) in
 #------------------------------------------------------------------------------
 
     Darwin)
+        brew install ccache
+        bash "$SCRIPT_DIR/install_boost_macos.sh"
+
+
         # Check for Homebrew install and abort if it is not installed.
         brew -v > /dev/null 2>&1 || { echo >&2 "ERROR - solidity requires a Homebrew install.  See https://brew.sh."; exit 1; }
-        brew update
-        # Use Homebrew's Boost, which includes Boost.Process
-        brew list boost >/dev/null 2>&1 || brew install boost
-        brew install cmake
+        # don't install cmake; brew ships bleeding edge cmake for fun(no)
         brew install curl
-        brew install ccache
-        if [ "$CI" = true ]; then
-            brew upgrade cmake
-        fi
-
         ;;
 
 #------------------------------------------------------------------------------
@@ -145,7 +142,7 @@ case $(uname -s) in
             Debian*)
                 #Debian
                 . /etc/os-release
-                
+
                 # Install "normal packages"
                 sudo apt-get -y update
                 sudo apt-get -y install \
@@ -224,7 +221,7 @@ case $(uname -s) in
             Ubuntu|LinuxMint)
                 #LinuxMint is a distro on top of Ubuntu.
                 #Ubuntu
-                
+
                 sudo apt-get -y update
                 sudo apt-get -y install \
                     build-essential \

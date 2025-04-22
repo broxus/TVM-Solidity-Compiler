@@ -3,6 +3,11 @@ cmake_minimum_required(VERSION 3.13.0)
 set(ETH_CMAKE_DIR   "${CMAKE_CURRENT_LIST_DIR}/cmake"   CACHE PATH "The path to the cmake directory")
 list(APPEND CMAKE_MODULE_PATH ${ETH_CMAKE_DIR})
 
+# CMP0167 (CMake 3.29+): FindBoost module is removed. Set to NEW to use config-mode finding.
+if(POLICY CMP0167)
+	cmake_policy(SET CMP0167 NEW)
+endif()
+
 # Set the build type, if none was specified.
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 	if(EXISTS "${PROJECT_SOURCE_DIR}/.git")
@@ -52,11 +57,11 @@ include_directories(SYSTEM ${JSONCPP_INCLUDE_DIR})
 find_package(Threads)
 
 if(NOT PEDANTIC)
-  message(WARNING "-- Pedantic build flags turned off. Warnings will not make compilation fail. This is NOT recommended in development builds.")
+	message(WARNING "-- Pedantic build flags turned off. Warnings will not make compilation fail. This is NOT recommended in development builds.")
 endif()
 
 if (PROFILE_OPTIMIZER_STEPS)
-    add_definitions(-DPROFILE_OPTIMIZER_STEPS)
+	add_definitions(-DPROFILE_OPTIMIZER_STEPS)
 endif()
 
 # Figure out what compiler and system are we using

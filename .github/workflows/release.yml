@@ -8,13 +8,15 @@ env:
   RELEASE_BIN: sold
   CARGO_TARGET_DIR: target
   RELEASE_ADDS: README.md
+  BOOST_VERSION_FOR_CACHE: "1.86.0"
+  BOOST_DIR_FOR_CACHE: "boost_1_86_0" # update compiler/scripts/install_boost_macos.sh if change
 
 jobs:
   build:
     name: Build Artifacts (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
-      fail-fast: false # Allow other jobs to continue if one fails
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -68,21 +70,45 @@ jobs:
       - name: Install build dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install p7zip ccache # For packaging and ccache
           # Run the project's dependency script
           bash ${{ matrix.install_script }}
+          bash compiler/scripts/install_cmake.sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
+      - name: Cache Windows Boost Build
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: compiler/deps/boost
+          key: ${{ runner.os }}-boost-1.83.0-${{ hashFiles('compiler/scripts/install_deps.ps1') }}
+          restore-keys: |
+            ${{ runner.os }}-boost-1.83.0-
+
+      - name: Cache macOS Boost Build
+        if: runner.os == 'macOS'
+        id: cache-boost-macos # ID can still be useful for logs if needed
+        uses: actions/cache@v4
+        with:
+          # This path must match INSTALL_PREFIX from install_boost_macos.sh
+          path: ${{ env.HOME }}/.local/${{ env.BOOST_DIR_FOR_CACHE }}
+          # Key on the boost script itself, as it contains version and logic
+          key: ${{ runner.os }}-boost-${{ env.BOOST_VERSION_FOR_CACHE }}-${{ hashFiles('compiler/scripts/install_boost_macos.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-boost-${{ env.BOOST_VERSION_FOR_CACHE }}-
       - name: Install build dependencies (Windows)
         if: runner.os == 'Windows'
         shell: pwsh # Use PowerShell
         run: |
+          bash compiler/scripts/install_cmake.sh
           .\${{ matrix.install_script }}
+          Add-Content $env:GITHUB_PATH "$HOME\.local\bin"
 
       - name: Build Rust Binary (${{ env.RELEASE_BIN }})
         shell: bash # Use bash for consistency, even on Windows via Git Bash
         run: |
           cargo build --release
       - name: List target/release contents (Debug)
+        shell: bash
         run: ls -lah target/release
 
       - name: Package Artifact

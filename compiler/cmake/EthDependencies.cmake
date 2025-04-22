@@ -10,9 +10,9 @@ if (DEFINED MSVC)
 	else()
 		get_filename_component(DEPS_DIR "${CMAKE_CURRENT_LIST_DIR}/../deps/install" ABSOLUTE)
 		set(ETH_DEPENDENCY_INSTALL_DIR
-			"${DEPS_DIR}/x64"					# Old location for deps.
-			"${DEPS_DIR}/win64"					# New location for deps.
-			"${DEPS_DIR}/win64/Release/share"	# LLVM shared cmake files.
+			"${DEPS_DIR}/x64"					 # Old location for deps.
+			"${DEPS_DIR}/win64"					 # New location for deps.
+			"${DEPS_DIR}/win64/Release/share"	 # LLVM shared cmake files.
 		)
 	endif()
 	set (CMAKE_PREFIX_PATH ${ETH_DEPENDENCY_INSTALL_DIR} ${CMAKE_PREFIX_PATH})
@@ -30,6 +30,12 @@ if (WIN32)
 endif()
 
 set(BOOST_COMPONENTS "filesystem;unit_test_framework;program_options;system")
+
+if (Boost_FOUND AND "process" IN_LIST BOOST_COMPONENTS AND NOT Boost_PROCESS_LIBRARY AND NOT WIN32)
+	message(FATAL_ERROR "Boost was found, but the Boost.Process library (Boost_PROCESS_LIBRARY) was not. "
+										"This component is required and needs to be compiled and findable. "
+						"Please ensure the development package for Boost.Process is installed correctly.")
+endif()
 
 if (WIN32)
 	# Boost 1.77 fixes a bug that causes crashes on Windows for some relative paths in --allow-paths.
