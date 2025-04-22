@@ -78,6 +78,7 @@ case $(uname -s) in
         brew list boost >/dev/null 2>&1 || brew install boost
         brew install cmake
         brew install curl
+        brew install ccache
         if [ "$CI" = true ]; then
             brew upgrade cmake
         fi
@@ -117,6 +118,7 @@ case $(uname -s) in
                     base-devel \
                     boost \
                     cmake \
+                    ccache \
                     git
                 ;;
 
@@ -132,7 +134,7 @@ case $(uname -s) in
                 # See https://pkgs.alpinelinux.org/
 
                 apk update
-                apk add boost-dev boost-static build-base cmake git
+                apk add boost-dev boost-static build-base cmake ccache git
 
                 ;;
 
@@ -155,7 +157,8 @@ case $(uname -s) in
                     libboost-all-dev \
                     unzip \
                     curl \
-                    libclang-dev
+                    libclang-dev \
+                    ccache
 
                 ;;
 
@@ -179,7 +182,8 @@ case $(uname -s) in
                     gcc-c++ \
                     git \
                     libtool \
-                    curl
+                    curl \
+                    ccache
 
                 ;;
 
@@ -195,7 +199,7 @@ case $(uname -s) in
                 # See https://pkgs.alpinelinux.org/
 
                 sudo USE="static-libs" emerge  dev-libs/boost
-                sudo emerge dev-util/cmake sys-devel/gcc net-misc/curl dev-util/boost-build
+                sudo emerge dev-util/cmake sys-devel/gcc net-misc/curl dev-util/boost-build dev-util/ccache
 
                 ;;
 

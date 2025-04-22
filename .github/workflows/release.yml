@@ -44,6 +44,14 @@ jobs:
       - name: Install Rust toolchain (stable)
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.ccache
+          key: ${{ runner.os }}-ccache-${{ hashFiles('**/CMakeLists.txt', '**/*.cmake', '**/Makefile', '**/*.cpp', '**/*.h') }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
@@ -53,14 +61,14 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y p7zip-full # For packaging
+          sudo apt-get install -y p7zip-full ccache # For packaging and ccache
           # Run the project's dependency script
           sudo bash ${{ matrix.install_script }}
 
       - name: Install build dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install p7zip # For packaging
+          brew install p7zip ccache # For packaging and ccache
           # Run the project's dependency script
           bash ${{ matrix.install_script }}
 
