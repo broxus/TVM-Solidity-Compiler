@@ -177,3 +177,10 @@ set(sources
 
 add_library(solidity ${sources})
 target_link_libraries(solidity PUBLIC langutil solutil Boost::boost Boost::filesystem Boost::system fmt::fmt-header-only Threads::Threads)
+
+install(TARGETS solidity
+        EXPORT SolidityTargets
+        ARCHIVE DESTINATION lib
+        LIBRARY DESTINATION lib
+        RUNTIME DESTINATION bin
+)

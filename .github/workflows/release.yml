@@ -2,7 +2,7 @@ name: Release Build and Publish
 on:
   push:
     tags:
-      - 'v*' # Trigger on version tags like v0.1.0, v1.0.0, etc.
+      - "v*" # Trigger on version tags like v0.1.0, v1.0.0, etc.
 
 env:
   RELEASE_BIN: sold
@@ -30,7 +30,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          submodules: 'recursive' # Important if the project uses git submodules
+          submodules: "recursive" # Important if the project uses git submodules
 
       - name: Get version from tag
         id: get_version
@@ -78,8 +78,8 @@ jobs:
       - name: Build Rust Binary (${{ env.RELEASE_BIN }})
         shell: bash # Use bash for consistency, even on Windows via Git Bash
         run: |
-          # Build from the workspace root
           cargo build --release
+          ls -lah ; ls -lah target
 
       - name: Package Artifact
         shell: bash # Use bash for consistency
@@ -152,7 +152,7 @@ jobs:
         with:
           tag_name: ${{ steps.get_version.outputs.version }}
           name: Release ${{ steps.get_version.outputs.version }}
-          body: | 
+          body: |
             Release of version ${{ steps.get_version.outputs.version }}
           files: |
             artifacts/Linux-artifact/${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.version }}-Linux.tar.gz
