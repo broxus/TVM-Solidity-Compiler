@@ -74,6 +74,9 @@ fn main() {
             get_absolute_path(&boost_root_dir).expect("Failed to get absolute path for Boost root");
         config.define("BOOST_ROOT", absolute_boost_root);
         config.define("PEDANTIC", "OFF");
+        // Explicitly request the static multithreaded runtime library.
+        // Uses CMake generator expression to select MT for Release and MTd for Debug.
+        config.define("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreaded$<$<CONFIG:Debug>:Debug>");
     }
 
     let dst = config.build();

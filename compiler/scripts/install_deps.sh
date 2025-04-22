@@ -73,10 +73,9 @@ case $(uname -s) in
     Darwin)
         # Check for Homebrew install and abort if it is not installed.
         brew -v > /dev/null 2>&1 || { echo >&2 "ERROR - solidity requires a Homebrew install.  See https://brew.sh."; exit 1; }
-        brew update
         # Use Homebrew's Boost, which includes Boost.Process
         brew list boost >/dev/null 2>&1 || brew install boost
-        brew install cmake
+        # don't install cmake; brew ships bleeding edge cmake for fun(no)
         brew install curl
         brew install ccache
         if [ "$CI" = true ]; then
@@ -145,7 +144,7 @@ case $(uname -s) in
             Debian*)
                 #Debian
                 . /etc/os-release
-                
+
                 # Install "normal packages"
                 sudo apt-get -y update
                 sudo apt-get -y install \
@@ -224,7 +223,7 @@ case $(uname -s) in
             Ubuntu|LinuxMint)
                 #LinuxMint is a distro on top of Ubuntu.
                 #Ubuntu
-                
+
                 sudo apt-get -y update
                 sudo apt-get -y install \
                     build-essential \
