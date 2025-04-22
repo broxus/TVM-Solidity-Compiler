@@ -10,107 +10,119 @@
  * See the  GNU General Public License for more details at: https://www.gnu.org/licenses/gpl-3.0.html
  */
 
-fn absolute_path(path: &str) -> String {
-    let path = std::path::PathBuf::from(path);
-    let mut str = std::fs::canonicalize(path).unwrap().display().to_string();
-    // eprintln!("We will get it from {}", str.to_string());
-    if str.starts_with(r"\\?\") {
-        // https://doc.rust-lang.org/std/fs/fn.canonicalize.html
-        // https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file
-        str = str.get(4..).unwrap().to_string();
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+fn get_absolute_path<P: AsRef<Path>>(path: P) -> Result<PathBuf, std::io::Error> {
+    let path_buf = PathBuf::from(path.as_ref());
+    let abs_path = fs::canonicalize(&path_buf)?;
+    let path_str = abs_path.to_string_lossy();
+    if cfg!(windows)
+        && path_str.starts_with(r"\\?\")
+        && !path.as_ref().to_string_lossy().starts_with(r"\\?\")
+    {
+        Ok(PathBuf::from(
+            path_str.get(4..).expect("Invalid canonical path format"),
+        ))
+    } else {
+        Ok(abs_path)
     }
-    str
 }
 
-fn full_lib_name(lib_name: &str, boost_lib_dir: &str) -> String {
-    let files = std::fs::read_dir(boost_lib_dir).unwrap();
-    for file in files {
-        let mut file_name = file.unwrap().file_name().to_str().unwrap().to_string();
-        if file_name.starts_with(lib_name) {
-            if file_name.ends_with(".lib") {
-                file_name = file_name.get(0..file_name.len() - 4).unwrap().to_string();
-            }
-            return file_name.to_string();
+fn find_boost_lib_name(prefix: &str, boost_lib_dir: &Path) -> Result<String, String> {
+    for entry in fs::read_dir(boost_lib_dir)
+        .map_err(|e| format!("Failed to read Boost lib dir {:?}: {}", boost_lib_dir, e))?
+    {
+        let entry = entry.map_err(|e| format!("Failed to read entry in Boost lib dir: {}", e))?;
+        let file_name = entry.file_name();
+        let file_name_str = file_name.to_string_lossy();
+
+        if file_name_str.starts_with(prefix) && file_name_str.ends_with(".lib") {
+            return Ok(file_name_str
+                .get(..file_name_str.len() - 4)
+                .expect("Filename slicing failed")
+                .to_string());
         }
     }
-    panic!();
+    Err(format!(
+        "Could not find Boost library starting with '{}' in {:?}",
+        prefix, boost_lib_dir
+    ))
 }
 
 // To debug this use command:
 // cargo build -vv
 fn main() {
-    println!("cargo:rerun-if-changed=../compiler/");
+    let manifest_dir =
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
+    let compiler_dir = manifest_dir.join("../compiler");
 
-    let profile = std::env::var("PROFILE").unwrap();
-    let sol2tvm = if cfg!(target_os = "windows") {
-        cmake::Config::new("../compiler")
-            .define("BOOST_ROOT", absolute_path("../compiler/deps/boost/"))
-            .define("PEDANTIC", "OFF")
-            .define("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreaded")
-            .build()
-    } else {
-        cmake::Config::new("../compiler").build()
-    };
+    println!("cargo:rerun-if-changed={}", compiler_dir.display());
+    println!("cargo:rerun-if-changed=build.rs");
 
-    for lib in ["solc", "solidity", "langutil", "solutil"] {
-        if cfg!(target_os = "windows") {
-            println!(
-                "cargo:rustc-link-search=native={}/build/lib{}/{}",
-                sol2tvm.display(),
-                lib,
-                profile
-            );
-        } else {
-            println!(
-                "cargo:rustc-link-search=native={}/build/lib{}",
-                sol2tvm.display(),
-                lib
-            );
-        }
+    let mut config = cmake::Config::new(&compiler_dir);
+
+    config
+        .define("WITH_TESTS", "OFF")
+        .define("SOLC_LINK_STATIC", "OFF")
+        .define("SOLC_STATIC_STDLIBS", "OFF");
+
+    if cfg!(target_os = "windows") {
+        let boost_root_dir = compiler_dir.join("deps/boost");
+        let absolute_boost_root =
+            get_absolute_path(&boost_root_dir).expect("Failed to get absolute path for Boost root");
+        config.define("BOOST_ROOT", absolute_boost_root);
+        config.define("PEDANTIC", "OFF");
+    }
+
+    let dst = config.build();
+
+    println!(
+        "cargo:rustc-link-search=native={}",
+        dst.join("lib").display()
+    );
+
+    for lib in ["solc", "solidity", "langutil", "solutil", "jsoncpp"] {
         println!("cargo:rustc-link-lib=static={}", lib);
     }
 
-    println!("cargo:rustc-link-search=native={}/lib", sol2tvm.display());
-    println!(
-        "cargo:rustc-link-search=native={}/build/deps/lib",
-        sol2tvm.display()
-    );
-
-    let boost_lib_dir = "../compiler/deps/boost/lib";
     if cfg!(target_os = "windows") {
+        let boost_lib_dir = compiler_dir.join("deps/boost/lib");
+        let absolute_boost_lib_dir =
+            get_absolute_path(&boost_lib_dir).expect("Failed to get absolute path for Boost lib");
         println!(
             "cargo:rustc-link-search=native={}",
-            absolute_path(boost_lib_dir)
+            absolute_boost_lib_dir.display()
         );
-    } else if cfg!(target_os = "macos") {
-        match std::env::var("HOMEBREW") {
-            Ok(homebrew) => {
-                assert!(
-                    std::path::PathBuf::from(homebrew.to_string()).exists(),
-                    "Set correct $HOMEBREW!"
-                );
-                println!("cargo:rustc-link-search=native={}/lib", homebrew)
+        let boost_fs_lib = find_boost_lib_name("libboost_filesystem", &absolute_boost_lib_dir)
+            .expect("Failed to find boost_filesystem lib name");
+        println!("cargo:rustc-link-lib=static={}", boost_fs_lib);
+    } else {
+        if cfg!(target_os = "macos") {
+            match env::var("HOMEBREW_PREFIX") {
+                Ok(brew_prefix) => {
+                    println!("cargo:rustc-link-search=native={}/lib", brew_prefix);
+                }
+                Err(_) => {
+                    println!("cargo:rustc-link-search=native=/opt/homebrew/lib");
+                    println!("cargo:rustc-link-search=native=/usr/local/lib");
+                }
             }
-            // use default path
-            Err(_) => println!("cargo:rustc-link-search=native=/opt/homebrew/lib"),
+        } else if cfg!(target_os = "freebsd") {
+            println!("cargo:rustc-link-search=native=/usr/local/lib");
+        } else if cfg!(target_os = "linux") {
+            println!("cargo:rustc-link-search=native=/usr/lib/x86_64-linux-gnu");
+            println!("cargo:rustc-link-search=native=/usr/lib64");
+            println!("cargo:rustc-link-search=native=/usr/lib");
         }
         println!("cargo:rustc-link-search=native=/usr/local/lib");
-    } else if cfg!(target_os = "freebsd") {
-        println!("cargo:rustc-link-search=native=/usr/local/lib");
-    }
 
-    println!("cargo:rustc-link-lib=static=jsoncpp");
-    if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-        // preferred way is to link statically to minimize exec deps
-        println!("cargo:rustc-link-search=native=/usr/lib/x86_64-linux-gnu");
-        println!("cargo:rustc-link-lib=static=boost_filesystem");
-    } else if cfg!(target_os = "freebsd") {
-        // libboost_filesystem.a from devel/boost-libs is compiled w/o -fPIC,
-        // so link dynamically
-        println!("cargo:rustc-link-lib=boost_filesystem");
-    } else if cfg!(target_os = "windows") {
-        let lib_name = full_lib_name("libboost_filesystem", &absolute_path(boost_lib_dir));
-        println!("cargo:rustc-link-lib=static={}", lib_name);
+        if cfg!(target_os = "freebsd") {
+            println!("cargo:rustc-link-lib=boost_filesystem");
+        } else {
+            println!("cargo:rustc-link-lib=static=boost_filesystem");
+        }
     }
 
     if cfg!(target_os = "macos") || cfg!(target_os = "freebsd") {
@@ -118,12 +130,4 @@ fn main() {
     } else if cfg!(target_os = "linux") {
         println!("cargo:rustc-link-lib=stdc++");
     }
-
-    // let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
-    // bindgen::Builder::default()
-    //     .header("../compiler/libsolc/libsolc.h")
-    //     .generate()
-    //     .expect("Failed to generate bindings")
-    //     .write_to_file(out.join("bindings.rs"))
-    //     .expect("Failed to write bindings");
 }
