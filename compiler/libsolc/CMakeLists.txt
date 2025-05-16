@@ -20,9 +20,9 @@ else()
 	target_link_libraries(libsolc PRIVATE solidity)
 
 	install(TARGETS libsolc
-	        EXPORT SolidityTargets
-	        ARCHIVE DESTINATION lib
-	        LIBRARY DESTINATION lib
-	        RUNTIME DESTINATION bin
+			EXPORT SolidityTargets
+			ARCHIVE DESTINATION lib
+			LIBRARY DESTINATION lib
+			RUNTIME DESTINATION bin
 	)
 endif()
