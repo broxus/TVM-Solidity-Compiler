@@ -51,9 +51,10 @@ fn find_boost_lib_name(prefix: &str, boost_lib_dir: &Path) -> Result<String, Str
     ))
 }
 
-// To debug this use command:
+// To debug this script use command:
 // cargo build -vv
 fn main() {
+    let profile = std::env::var("PROFILE").unwrap();
     let manifest_dir =
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
     let compiler_dir = manifest_dir.join("../compiler");
@@ -76,10 +77,17 @@ fn main() {
         config.define("PEDANTIC", "OFF");
         // Explicitly request the static multithreaded runtime library.
         // Uses CMake generator expression to select MT for Release and MTd for Debug.
-        config.define(
-            "CMAKE_MSVC_RUNTIME_LIBRARY",
-            "MultiThreaded$<$<CONFIG:Debug>:Debug>",
-        );
+        if profile.to_lowercase() == "release" {
+            config.define(
+                "CMAKE_MSVC_RUNTIME_LIBRARY",
+                "MultiThreaded$<$<CONFIG:Release>:Release>",
+            );
+        } else {
+            config.define(
+                "CMAKE_MSVC_RUNTIME_LIBRARY",
+                "MultiThreaded$<$<CONFIG:Debug>:Debug>",
+            );
+        }
     }
 
     let dst = config.build();
