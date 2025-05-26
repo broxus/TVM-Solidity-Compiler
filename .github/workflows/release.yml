@@ -7,7 +7,6 @@ on:
 env:
   RELEASE_BIN: sold
   CARGO_TARGET_DIR: target
-  RELEASE_ADDS: README.md
   BOOST_VERSION_FOR_CACHE: "1.86.0"
   BOOST_DIR_FOR_CACHE: "boost_1_86_0" # update compiler/scripts/install_boost_macos.sh if change
 
@@ -20,13 +19,10 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            archive_ext: tar.gz
             install_script: ./compiler/scripts/install_deps.sh
           - os: macos-latest
-            archive_ext: tar.gz
             install_script: ./compiler/scripts/install_deps.sh
           - os: windows-latest
-            archive_ext: zip
             install_script: ./compiler/scripts/install_deps.ps1
     steps:
       - name: Checkout code
@@ -63,7 +59,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y p7zip-full ccache # For packaging and ccache
+          sudo apt-get install -y ccache # gzip is typically pre-installed
           # Run the project's dependency script
           sudo bash ${{ matrix.install_script }}
 
@@ -86,7 +82,7 @@ jobs:
 
       - name: Cache macOS Boost Build
         if: runner.os == 'macOS'
-        id: cache-boost-macos # ID can still be useful for logs if needed
+        id: cache-boost-macos
         uses: actions/cache@v4
         with:
           # This path must match INSTALL_PREFIX from install_boost_macos.sh
@@ -97,14 +93,14 @@ jobs:
             ${{ runner.os }}-boost-${{ env.BOOST_VERSION_FOR_CACHE }}-
       - name: Install build dependencies (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh # Use PowerShell
+        shell: pwsh
         run: |
           bash compiler/scripts/install_cmake.sh
           .\${{ matrix.install_script }}
           Add-Content $env:GITHUB_PATH "$HOME\.local\bin"
 
       - name: Build Rust Binary (${{ env.RELEASE_BIN }})
-        shell: bash # Use bash for consistency, even on Windows via Git Bash
+        shell: bash
         run: |
           cargo build --release
       - name: List target/release contents (Debug)
@@ -112,40 +108,38 @@ jobs:
         run: ls -lah target/release
 
       - name: Package Artifact
-        shell: bash # Use bash for consistency
+        shell: bash
         run: |
-          # Create a staging directory
-          mkdir staging
-          # Define binary path and name
-          BIN_NAME="${{ env.RELEASE_BIN }}"
-          SOURCE_BIN_PATH="./${{ env.CARGO_TARGET_DIR }}/release/${BIN_NAME}"
-          TARGET_BIN_PATH="./staging/${BIN_NAME}"
+          BASE_BIN_NAME="${{ env.RELEASE_BIN }}"
+          SOURCE_BIN_PATH="./${{ env.CARGO_TARGET_DIR }}/release/${BASE_BIN_NAME}"
+
+          TARGET_UNCOMPRESSED_FILENAME="${BASE_BIN_NAME}"
           if [[ "${{ runner.os }}" == "Windows" ]]; then
             SOURCE_BIN_PATH="${SOURCE_BIN_PATH}.exe"
-            TARGET_BIN_PATH="${TARGET_BIN_PATH}.exe"
+            TARGET_UNCOMPRESSED_FILENAME="${TARGET_UNCOMPRESSED_FILENAME}.exe"
           fi
-          # Copy binary and additional files
-          cp "${SOURCE_BIN_PATH}" "${TARGET_BIN_PATH}"
-          # Handle potential multiple files in RELEASE_ADDS
-          for file_to_add in ${{ env.RELEASE_ADDS }}; do
-            cp "$file_to_add" ./staging/
-          done
-          # Create archive name
-          ARTIFACT_NAME="${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.version }}-${{ runner.os }}.${{ matrix.archive_ext }}"
-          # Create the archive
-          pushd staging
-          if [[ "${{ matrix.archive_ext }}" == "zip" ]]; then
-            7z a -tzip ../"${ARTIFACT_NAME}" *
-          else
-            # Use tar piped to 7z for .tar.gz for better compatibility/permissions
-            7z a -ttar -so -an * | 7z a -si ../"${ARTIFACT_NAME}"
-          fi
-          popd
-          echo "ARTIFACT_PATH=${ARTIFACT_NAME}" >> $GITHUB_ENV
-          echo "Created ${ARTIFACT_NAME}"
 
-      - name: List Staging Contents (Debug)
-        run: ls -R staging
+          mkdir packaging_tmp
+          TEMP_BIN_PATH="./packaging_tmp/${TARGET_UNCOMPRESSED_FILENAME}"
+
+          cp "${SOURCE_BIN_PATH}" "${TEMP_BIN_PATH}"
+
+          pushd packaging_tmp
+          gzip "${TARGET_UNCOMPRESSED_FILENAME}" # Creates ${TARGET_UNCOMPRESSED_FILENAME}.gz
+          GZIPPED_FILENAME="${TARGET_UNCOMPRESSED_FILENAME}.gz"
+          popd
+
+          FINAL_ARTIFACT_NAME="${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.version }}-${{ runner.os }}.gz"
+          mv "./packaging_tmp/${GZIPPED_FILENAME}" "./${FINAL_ARTIFACT_NAME}"
+          rm -rf packaging_tmp
+
+          echo "ARTIFACT_PATH=${FINAL_ARTIFACT_NAME}" >> $GITHUB_ENV
+          echo "Created ${FINAL_ARTIFACT_NAME}"
+          echo "Contents of ${FINAL_ARTIFACT_NAME} (when uncompressed) will be: ${TARGET_UNCOMPRESSED_FILENAME}"
+
+      - name: List Workspace Contents after Packaging (Debug)
+        shell: bash
+        run: ls -lA
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -155,10 +149,10 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: build # Run after the build job matrix completes successfully
-    runs-on: ubuntu-latest # Release creation can run on Linux
+    needs: build
+    runs-on: ubuntu-latest
     permissions:
-      contents: write # Needed to create releases and upload assets
+      contents: write
     steps:
       - name: Get version from tag
         id: get_version
@@ -171,9 +165,10 @@ jobs:
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:
-          path: artifacts # Download all artifacts into an 'artifacts' directory
+          path: artifacts
 
       - name: List downloaded files
+        shell: bash
         run: ls -R artifacts
 
       - name: Create GitHub Release
@@ -184,8 +179,8 @@ jobs:
           body: |
             Release of version ${{ steps.get_version.outputs.version }}
           files: |
-            artifacts/Linux-artifact/${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.version }}-Linux.tar.gz
-            artifacts/macOS-artifact/${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.version }}-macOS.tar.gz
-            artifacts/Windows-artifact/${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.version }}-Windows.zip
+            artifacts/Linux-artifact/${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.version }}-Linux.gz
+            artifacts/macOS-artifact/${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.version }}-macOS.gz
+            artifacts/Windows-artifact/${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.version }}-Windows.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
