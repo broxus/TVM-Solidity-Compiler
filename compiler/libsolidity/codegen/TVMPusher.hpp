@@ -78,27 +78,38 @@ private:
 	std::map<uint32_t, std::string> m_privcateFuncs;
 };
 
+class StorageLayout {
+public:
+	explicit StorageLayout(ContractDefinition const* contract);
+	int getStateVarIndex(VariableDeclaration const *variable) const;
+	std::vector<Type const *> getC4Types() const;
+	std::vector<VariableDeclaration const *> usualAndUnpackedStateVariables() const;
+	std::vector<VariableDeclaration const *> usualStateVariables() const;
+	std::vector<VariableDeclaration const *> unpackedStateVariables() const;
+	std::vector<VariableDeclaration const *> nostorageStateVars() const;
+	bool tooMuchStateVariables() const;
+	FunctionDefinition const* hasConstructor() const;
+	bool storePubkeyInC4() const;
+	bool storeTimestampInC4() const;
+	int getOffsetC4() const;
+	std::vector<std::pair<VariableDeclaration const*, int>> getStaticVariables() const;
+	int getUnpackIndex() const;
+
+private:
+	ContractDefinition const* m_contract;
+	std::map<VariableDeclaration const*, int> m_stateVarIndex;
+};
+
 class TVMCompilerContext {
 public:
 	TVMCompilerContext(ContractDefinition const* contract, PragmaDirectiveHelper const& pragmaHelper);
-	void initMembers(ContractDefinition const* contract);
-	int getStateVarIndex(VariableDeclaration const *variable) const;
-	std::vector<VariableDeclaration const *> c4StateVariables() const;
-	std::vector<VariableDeclaration const *> nostorageStateVars() const;
-	bool tooMuchStateVariables() const;
-	std::vector<Type const *> c4StateVariableTypes() const;
 	PragmaDirectiveHelper const& pragmaHelper() const;
 	bool isStdlib() const;
 	std::pair<std::string, uint32_t>
 	functionInternalName(FunctionDefinition const* _function, bool calledByPoint) const;
 	static std::string getFunctionExternalName(FunctionDefinition const* _function);
 	const ContractDefinition* getContract() const;
-	bool hasConstructor() const;
 	bool ignoreIntegerOverflow() const;
-	FunctionDefinition const* afterSignatureCheck() const;
-	bool storeTimestampInC4() const;
-	int getOffsetC4() const;
-	std::vector<std::pair<VariableDeclaration const*, int>> getStaticVariables() const;
 	void setCurrentFunction(FunctionDefinition const* _f, std::string _name) {
 		solAssert(m_currentFunction == nullptr && !m_currentFunctionName.has_value(),  "");
 		m_currentFunction = _f;
@@ -112,12 +123,18 @@ public:
 	}
 	void addInlineFunction(const std::string& name, Pointer<CodeBlock> body);
 	Pointer<CodeBlock> getInlinedFunction(const std::string& name);
-	void addPublicFunction(uint32_t functionId, const std::string& functionName);
-	const std::vector<std::pair<uint32_t, std::string>>& getPublicFunctions();
+	void addPublicFunction(FunctionDefinition const* function, uint32_t functionId, const std::string& functionName);
+	void addExtPublicFunction(uint32_t functionId, const std::string& functionName);
+	void addIntPublicFunction(uint32_t functionId, const std::string& functionName);
+	const std::vector<std::pair<uint32_t, std::string>>& getExtPublicFunctions();
+	const std::vector<std::pair<uint32_t, std::string>>& getIntPublicFunctions();
 
 	FunctionCallGraph& callGraph() { return m_callGraph; }
-	bool isFallBackGenerated() const { return m_isFallBackGenerated; }
-	void setIsFallBackGenerated() { m_isFallBackGenerated = true; }
+	FunctionDefinition const* fallBack() const { return m_fallback; }
+	void setFallback(FunctionDefinition const* _fallback) {
+		solAssert(m_fallback == nullptr, "");
+		m_fallback = _fallback;
+	}
 	bool isReceiveGenerated() const { return m_isReceiveGenerated; }
 	void setIsReceiveGenerated() { m_isReceiveGenerated = true; }
 	bool isOnBounceGenerated() const { return m_isOnBounceGenerated; }
@@ -142,19 +159,21 @@ public:
 	void startBlock(bool uncheckedBlock) { m_isUncheckedBlock.push(uncheckedBlock); }
 	void endBlock() { m_isUncheckedBlock.pop(); }
 
+	StorageLayout const& storageLayout() const { return m_storageLayout; }
+
 private:
 	// TODO split to several classes
 	ContractDefinition const* m_contract{};
 	bool ignoreIntOverflow{};
 	std::stack<bool> m_isUncheckedBlock;
 	PragmaDirectiveHelper const& m_pragmaHelper;
-	std::map<VariableDeclaration const*, int> m_stateVarIndex;
 	FunctionDefinition const* m_currentFunction{};
 	std::optional<std::string> m_currentFunctionName;
 	std::map<std::string, Pointer<CodeBlock>> m_inlinedFunctions;
 	FunctionCallGraph m_callGraph;
-	std::vector<std::pair<uint32_t, std::string>> m_publicFunctions;
-	bool m_isFallBackGenerated{};
+	std::vector<std::pair<uint32_t, std::string>> m_extPublicFunctions;
+	std::vector<std::pair<uint32_t, std::string>> m_intPublicFunctions;
+	FunctionDefinition const * m_fallback{};
 	bool m_isReceiveGenerated{};
 	bool m_isOnBounceGenerated{};
 	ContactsUsageScanner m_usage;
@@ -164,6 +183,7 @@ private:
 	std::map<std::string, std::vector<Type const*>> m_tuples;
 	bool m_pragmaSaveAllFunctions{};
 	InherHelper const m_inherHelper;
+	StorageLayout const m_storageLayout;
 };
 
 class StackPusher {
@@ -187,7 +207,7 @@ private:
 	void change(int take, int ret);
 public:
 	int stackSize() const;
-	void ensureSize(int savedStackSize, const std::string &location = "", const ASTNode* node = nullptr);
+	void ensureSize(int savedStackSize, const std::string &location = "", const ASTNode* node = nullptr) const;
 	void startOpaque();
 	void endOpaque(int take, int ret, bool isPure = false);
 	void declRetFlag();
@@ -281,7 +301,7 @@ public:
 	// return true if on stack there are (value, slice) else false if (slice, value)
 	[[nodiscard]]
 	bool fastLoad(const Type* type);
-	void load(const Type* type, bool reverseOrder);
+	void load(const Type* type, bool dataOnTop);
 
 	void preload(const Type *type);
 	void loadQ(const Type *type);
@@ -289,7 +309,6 @@ public:
 	void store(const Type *type);
 	void storeQ(const Type *type);
 	void pushZeroAddress();
-	Pointer<Function> generateC7ToC4();
 	void convert(Type const *leftType, Type const *rightType);
 	void checkFit(Type const *type);
 	void pushParameter(std::vector<ASTPointer<VariableDeclaration>> const& params);
@@ -412,6 +431,9 @@ class TypeConversion {
 public:
 	TypeConversion(StackPusher& _pusher) : m_pusher{_pusher} { }
 	void convert(Type const* leftType, Type const* rightType);
+	void convertIntegerToLibraryContinuation() const;
+	void convertIntegerToLibraryExoticCell() const;
+
 private:
 	void integerToInteger(IntegerType const* leftType, IntegerType const* rightType) const;
 	void fixedPointToInteger(IntegerType const* leftType, FixedPointType const* rightType) const;
@@ -432,6 +454,8 @@ private:
 	void fromSlice(Type const* leftType) const;
 	void fromTuple(Type const* leftType, TupleType const* rightType);
 	void fromStringLiteral(Type const* leftType, StringLiteralType const* rightType) const;
+	void fromCell(Type const* leftType) const;
+
 private:
 	StackPusher& m_pusher;
 }; // end TypeConversion

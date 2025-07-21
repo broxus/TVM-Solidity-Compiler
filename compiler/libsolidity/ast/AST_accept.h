@@ -88,6 +88,30 @@ void StructuredDocumentation::accept(ASTConstVisitor& _visitor) const
 	_visitor.endVisit(*this);
 }
 
+void ReplayProtection::accept(ASTVisitor& _visitor)
+{
+	_visitor.visit(*this);
+	_visitor.endVisit(*this);
+}
+
+void ReplayProtection::accept(ASTConstVisitor& _visitor) const
+{
+	_visitor.visit(*this);
+	_visitor.endVisit(*this);
+}
+
+void ExternalMsgHeaders::accept(ASTVisitor& _visitor)
+{
+	_visitor.visit(*this);
+	_visitor.endVisit(*this);
+}
+
+void ExternalMsgHeaders::accept(ASTConstVisitor& _visitor) const
+{
+	_visitor.visit(*this);
+	_visitor.endVisit(*this);
+}
+
 void ContractDefinition::accept(ASTVisitor& _visitor)
 {
 	if (_visitor.visit(*this))

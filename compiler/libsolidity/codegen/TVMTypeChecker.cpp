@@ -41,7 +41,7 @@ TVMTypeChecker::TVMTypeChecker(langutil::ErrorReporter& _errorReporter) :
 
 }
 
-void TVMTypeChecker::checkOverrideAndOverload() {
+void TVMTypeChecker::checkOverrideAndOverload() const {
 	std::set<CallableDeclaration const*> overridedFunctions;
 	std::set<CallableDeclaration const*> functions;
 	std::map<uint32_t, FunctionDefinition const*> funcId2Decl;
@@ -155,7 +155,7 @@ void TVMTypeChecker::checkOverrideAndOverload() {
 	}
 }
 
-void TVMTypeChecker::check_onCodeUpgrade(FunctionDefinition const& f) {
+void TVMTypeChecker::check_onCodeUpgrade(FunctionDefinition const& f) const {
 	const std::string s = "\nfunction onCodeUpgrade(...) (internal|private) { /*...*/ }";
 	if (!f.returnParameters().empty()) {
 		m_errorReporter.typeError(5078_error, f.returnParameters().at(0)->location(), "Function mustn't return any parameters. Expected function signature:" + s);
@@ -225,6 +225,22 @@ bool TVMTypeChecker::visit(const Mapping &_mapping) {
 }
 
 bool TVMTypeChecker::visit(const FunctionDefinition &f) {
+	if (f.isExternalMsg()) {
+		if (auto contract = f.annotation().contract) {
+			if (contract->externalMsgHeaders() == nullptr && contract->canBeDeployed()) {
+				m_errorReporter.typeError(
+					7917_error,
+					f.location(),
+					SecondarySourceLocation().append("Contract is here: ", contract->location()),
+					"Function is marked as `externalMsg` but the contract can't accept external messages.\n"
+					"Hint: consider adding the contract annotation:\n"
+					"#[ExternalMessage(time,expire)]\n"
+					"#[TimeReplayProt]"
+				);
+			}
+		}
+	}
+
 	if (f.functionID().has_value()) {
 		if (f.functionID().value() == 0) {
 			m_errorReporter.typeError(8746_error, f.location(), "functionID can't be equal to zero because this value is reserved for receive function.");
@@ -278,7 +294,7 @@ bool TVMTypeChecker::visit(IndexRangeAccess const& indexRangeAccess) {
 	return true;
 }
 
-void TVMTypeChecker::checkDeprecation(FunctionCall const& _functionCall) {
+void TVMTypeChecker::checkDeprecation(FunctionCall const& _functionCall) const {
 	auto memberAccess = to<MemberAccess>(&_functionCall.expression());
 	ASTString const& memberName = memberAccess ? memberAccess->memberName() : "";
 	auto magicType = memberAccess ? to<MagicType>(memberAccess->expression().annotation().type) : nullptr;
@@ -596,7 +612,10 @@ bool TVMTypeChecker::visit(FunctionCallOptions const& _node) {
 	if (auto memberAccess = to<MemberAccess>(&_node.expression())) {
 		if (FunctionDefinition const* funDef = to<FunctionDefinition>(memberAccess->annotation().referencedDeclaration)) {
 			ContractDefinition const* contract = funDef->annotation().contract;
-			if (contract && ::hasConstructor(*contract)) {
+			std::vector<PragmaDirective const *> pragmaDirectives;
+			PragmaDirectiveHelper pdh{pragmaDirectives};
+			TVMCompilerContext ctx{contract, pdh};
+			if (contract && ctx.storageLayout().hasConstructor()) {
 				std::vector<ASTPointer<Expression const>> options = _node.options();
 				std::vector<ASTPointer<ASTString>> const& names = _node.names();
 				for (std::size_t i = 0; i < options.size(); ++i) {
@@ -604,7 +623,7 @@ bool TVMTypeChecker::visit(FunctionCallOptions const& _node) {
 						m_errorReporter.typeError(
 							1074_error,
 							options.at(i)->location(),
-							SecondarySourceLocation().append("Constructor is here: ", ::hasConstructor(*contract)->location()),
+							SecondarySourceLocation().append("Constructor is here: ", ctx.storageLayout().hasConstructor()->location()),
 							"\"stateInit\" option can be used only for contract that does not have a constructor.\n"
 							"Hint: if you want to deploy contact, then deploy via `new ContractName{...}(...);`.");
 					}
@@ -627,10 +646,55 @@ void TVMTypeChecker::endVisit(ContractDefinition const& ) {
 	m_inherHelper = nullptr;
 }
 
-void TVMTypeChecker::checkMainContract(ContractDefinition const *_mainContract, PragmaDirectiveHelper const& pragmaHelper) {
+void TVMTypeChecker::checkMainContract(ContractDefinition const *_mainContract, PragmaDirectiveHelper const& pragmaHelper) const {
+	const auto msgHeaders = _mainContract->externalMsgHeaders();
+	const auto replayProt = _mainContract->replayProtection();
+
+	if (msgHeaders != nullptr && replayProt == nullptr) {
+		m_errorReporter.typeError(
+			1151_error,
+			_mainContract->location(),
+			"Define replay protection attribute because the contract receives external messages."
+		);
+	}
+	if (msgHeaders == nullptr && replayProt != nullptr) {
+		m_errorReporter.typeError(
+			7957_error,
+			_mainContract->location(),
+			"Define external message headers, because the replay protection attribute is defined."
+		);
+	}
+
+	if (msgHeaders != nullptr)
+		if (!msgHeaders->hasTime())
+			m_errorReporter.typeError(
+				9061_error,
+				msgHeaders->location(),
+				"Add header \"time\"."
+			);
+
+	if (_mainContract->afterSignatureCheck() != nullptr &&
+		(replayProt == nullptr || replayProt->type() != ReplayProtection::ReplayProtectionType::CustomReplayProt)) {
+			m_errorReporter.typeError(
+				2702_error,
+				_mainContract->location(),
+				SecondarySourceLocation().append("\"afterSignatureCheck\" is here: ", _mainContract->afterSignatureCheck()->location()),
+				"Use \"CustomReplayProt\" attribute because special function \"afterSignatureCheck\" is defined."
+			);
+	}
+	if (_mainContract->afterSignatureCheck() == nullptr &&
+		replayProt != nullptr &&
+		replayProt->type() == ReplayProtection::ReplayProtectionType::CustomReplayProt
+	)
+		m_errorReporter.typeError(
+			4961_error,
+			replayProt->location(),
+			"Define special function \"afterSignatureCheck\" because \"CustomReplayProt\" is used."
+		);
+
 	if (_mainContract->canBeDeployed()) {
 		TVMCompilerContext ctx{_mainContract, pragmaHelper};
-		if (!ctx.hasConstructor()) {
+		if (!ctx.storageLayout().hasConstructor()) {
 			for (auto const *contr : _mainContract->annotation().linearizedBaseContracts) {
 				for (VariableDeclaration const* stateVar : contr->stateVariables()) {
 					if (!stateVar->isConstant() && stateVar->value()) {

@@ -60,63 +60,70 @@ private:
 	static Json::Value setupTupleComponents(const TupleType* type);
 };
 
-class DecodePosition : private boost::noncopyable {
+class AbiPosition: boost::noncopyable {
 public:
-	virtual ~DecodePosition() = default;
-	virtual bool loadNextCell(Type const* type) = 0;
+	virtual ~AbiPosition() = default;
+	virtual bool skipType(Type const* type) = 0;
+	static void unroll(std::vector<Type const*>& types, Type const* type);
 };
 
-class DecodePositionAbiV2 : public DecodePosition {
+class AbiV2Position: public AbiPosition {
 public:
-	DecodePositionAbiV2(int _bitOffset, int _refOffset, const std::vector<Type const *>& _types);
-	bool loadNextCell(Type const* type) override;
+	AbiV2Position(int _bitOffset, int _refOffset, const std::vector<Type const *>& _types);
+	bool skipType(Type const* type) override;
 	int countOfCreatedBuilders() const;
-private:
-	void initTypes(Type const* type);
+	void skipTypes(std::vector<Type const *> const & _types);
+
+	bool getDoLoadNextCell(int index) const { return m_doLoadNextCell.at(index); }
+	Type const* getType(int index) const { return m_types.at(index); }
+	int size() const { return m_doLoadNextCell.size(); }
+	int currentIndex() const { return m_curTypeIndex; }
 
 private:
 	int m_curTypeIndex{};
 	std::vector<Type const*> m_types;
+	// Do we load next cell before decoding current type?
 	std::vector<bool> m_doLoadNextCell;
 	int m_countOfCreatedBuilders{};
 };
 
-class DecodePositionFromOneSlice : public DecodePosition {
+class AbiPositionFromOneSlice: public AbiPosition {
 public:
-	bool loadNextCell(Type const* /*type*/) override {
+	bool skipType(Type const* /*type*/) override {
 		return false;
 	}
 };
 
-class ChainDataDecoder : private boost::noncopyable {
+class ChainDataDecoder: boost::noncopyable {
 public:
 	explicit ChainDataDecoder(StackPusher *pusher);
+
 private:
-	int maxBits(bool hasCallback);
-	static int minBits(bool hasCallback);
+	int offsetExternalFunction(bool hasCallback) const;
+	static int offsetInternalFunction(bool hasCallback);
+
 public:
-	void decodePublicFunctionParameters(const std::vector<Type const*>& types, bool isResponsible, bool isInternal);
+	void decodePublicFunctionParameters(const std::vector<Type const*>& types, bool isResponsible, bool isInternal) const;
 	enum class DecodeType {
 		ONLY_EXT_MSG,
 		ONLY_INT_MSG,
 		BOTH
 	};
 	static DecodeType getDecodeType(FunctionDefinition const*);
-	void decodeFunctionParameters(const std::vector<Type const*>& types, bool isResponsible, DecodeType decodeType);
-	void decodeData(int offset, int usedRefs, const std::vector<Type const*>& types);
-	void decodeParameters(
-		const std::vector<Type const*>& types,
-		DecodePosition& position
-	);
-	void decodeParametersQ(
-		const std::vector<Type const*>& types,
-		DecodePosition& position
-	);
+	void decodeFunctionParameters(const std::vector<Type const*>& types, bool isResponsible, DecodeType decodeType) const;
+	void decodeData(int offset, int usedRefs, const std::vector<Type const*>& types, bool withENDS) const;
+	void decodeParameters(const std::vector<Type const*>& types, AbiPosition& position) const;
+	void decodeParametersQ(const std::vector<Type const*>& types, AbiPosition& position) const;
+
 private:
-	void loadNextSlice();
-	void loadNextSliceIfNeed(bool doLoadNextSlice);
-	void decodeParameter(Type const* type, DecodePosition* position);
-	void decodeParameterQ(Type const* type, DecodePosition* position, int ind);
+	void loadNextSlice() const;
+public:
+	void decodeParameter(Type const* type, AbiPosition* position,
+		bool isFirstCall = true,
+		bool loadForFirstCallIfNeeded = true) const;
+private:
+	void decodeParameterQ(Type const* type, AbiPosition* position, int ind) const;
+
 private:
 	StackPusher *pusher{};
 };
@@ -130,11 +137,11 @@ enum class ReasonOfOutboundMessage {
 	RemoteCallInternal
 };
 
-class ChainDataEncoder : private boost::noncopyable {
+class ChainDataEncoder: boost::noncopyable {
 public:
-	explicit ChainDataEncoder(StackPusher *pusher) : pusher{pusher} {}
-	void createDefaultConstructorMsgBodyAndAppendToBuilder(int bitSizeBuilder);
-	void createDefaultConstructorMessage2();
+	explicit ChainDataEncoder(StackPusher *pusher): pusher{pusher} {}
+	void createDefaultConstructorMsgBodyAndAppendToBuilder(int bitSizeBuilder) const;
+	void createDefaultConstructorMessage2() const;
 
 	// returns pair (functionID, is_manually_overridden)
 	static uint32_t calculateConstructorFunctionID();
@@ -161,25 +168,70 @@ public:
 		const std::optional<uint32_t>& callbackFunctionId,
 		int bitSizeBuilder,
 		bool reversedArgs = false
-	);
+	) const;
 
 	void createMsgBody(
 		const std::vector<VariableDeclaration const*> &params,
 		const std::variant<uint32_t, std::function<void()>>& functionId,
 		const std::optional<uint32_t>& callbackFunctionId,
-		DecodePositionAbiV2 &position
-	);
+		AbiV2Position &position
+	) const;
 
 	void encodeParameters(
 		const std::vector<Type const*>& types,
-		DecodePositionAbiV2& position
-	);
+		AbiV2Position& position,
+		bool hasUnpackedStateVars
+	) const;
 
 private:
 	static std::string toStringForCalcFuncID(Type const * type);
 
 private:
 	StackPusher *pusher{};
+};
+
+class UnpackedCoderDecoder: boost::noncopyable {
+public:
+	explicit UnpackedCoderDecoder(
+		StackPusher& pusher,
+		int _offset,
+		int _usedRefs,
+		int _varOffset,
+		std::vector<Type const*> const& _varTypes,
+		std::vector<bool> const& _varNeeded
+	);
+	void unpackedData();
+
+	void packData(std::map<int, std::function<void()>> const& varIndexToPush);
+
+private:
+	struct TypeSize {
+		int bits;
+		int refs;
+	};
+	std::optional<TypeSize> isFixedSize(int i, int j) const;
+	std::optional<int> getFixedRef(int i, int j) const;
+	std::unique_ptr<AbiV2Position> createPosition() const;
+	void skipTypes(int beginIndex, int endIndex, std::unique_ptr<AbiV2Position>& position) const;
+	void skipTypesAndLoadCellIfNeeded(int index, std::unique_ptr<AbiV2Position>& position) const;
+
+private:
+	StackPusher& pusher;
+	int const offset;
+	int const usedRefs;
+	int const varOffset;
+	std::vector<Type const*> const& varTypes;
+	std::vector<bool> const& varNeeded;
+
+	static constexpr int INF = 1e9;
+	int neededVars = 0;
+	std::vector<Type const*> types;
+	std::vector<int> varIndex;
+	std::vector<int> to;
+	std::vector<bool> isNeededType;
+
+	int startIndexType = -1;
+	int lastIndexType = -1;
 };
 
 }	// solidity::frontend

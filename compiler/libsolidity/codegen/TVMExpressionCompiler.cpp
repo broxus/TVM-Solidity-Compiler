@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2024 EverX. All Rights Reserved.
+ * Copyright (C) 2020-2025 EverX. All Rights Reserved.
  *
  * Licensed under the  terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License.
@@ -38,7 +38,7 @@ TVMExpressionCompiler::TVMExpressionCompiler(StackPusher &pusher) :
 {
 }
 
-void TVMExpressionCompiler::compileNewExpr(const Expression *expr) {
+void TVMExpressionCompiler::compileNewExpr(const Expression *expr) const {
 	TVMExpressionCompiler ec{m_pusher};
 	ec.acceptExpr(expr, true);
 }
@@ -232,7 +232,7 @@ bool TVMExpressionCompiler::pushLocalOrStateVariable(Identifier const &_identifi
 	} else if (tryPushConstant(declaration)) {
 		return true;
 	} else if (auto variable = to<VariableDeclaration>(declaration)) {
-		solAssert(variable->isStateVariable() && !variable->isConstant(), "");
+		solAssert(variable->isStateVariable() && !variable->isConstant(), "Can't get: " + variable->name());
 		m_pusher.getGlob(variable);
 		return true;
 	}
@@ -1127,7 +1127,7 @@ void TVMExpressionCompiler::visit2(IndexAccess const &indexAccess) {
 			m_pusher << "DIVMOD"; // slice cntRef rest
 			m_pusher.rotRev(); // rest slice cntRef
 			m_pusher.startContinuation();
-			m_pusher << "PLDREF";
+			m_pusher << "PLDREFIDX 0";
 			m_pusher << "CTOS";
 			m_pusher.endContinuation();
 			m_pusher.repeat(false);
@@ -1474,39 +1474,55 @@ bool TVMExpressionCompiler::tryAssignLValue(Assignment const &_assignment) {
 	return true;
 }
 
+void TVMExpressionCompiler::unrollTuple(Type const* type, TypePointers& result) {
+	if (auto tupleType = to<TupleType>(type)) {
+		for (auto const& element: tupleType->components()) {
+			unrollTuple(element, result);
+		}
+	} else {
+		result.push_back(type);
+	}
+}
+
+void TVMExpressionCompiler::assignTuple(Expression const* lhs, const TypePointers &right, int& index) {
+	if (lhs == nullptr) {
+		m_pusher.drop();
+		++index;
+		return;
+	}
+
+	if (const auto leftTuple = to<TupleExpression>(lhs)) {
+		for (const auto & leftComp : leftTuple->components()) {
+			assignTuple(leftComp.get(), right, index);
+		}
+	} else {
+		m_pusher.convert(lhs->annotation().type, right.at(index));
+		const int stackSizeForValue = m_pusher.stackSize();
+		const LValueInfo lValueInfo = expandLValue(lhs, false);
+		const int stackSize = m_pusher.stackSize();
+		const int expandLValueSize = stackSize - stackSizeForValue;
+		if (expandLValueSize > 0) {
+			m_pusher.blockSwap(1, expandLValueSize);
+		}
+		collectLValue(lValueInfo, true);
+		++index;
+	}
+}
+
 bool TVMExpressionCompiler::tryAssignTuple(Assignment const &_assignment) {
 	auto lhs = to<TupleExpression>(&_assignment.leftHandSide());
-	Expression const& rhs = _assignment.rightHandSide();
 	if (!lhs) {
 		return false;
 	}
-
 	compileNewExpr(&_assignment.rightHandSide());
-	if (lhs->components().size() >= 2) {
-		m_pusher.reverse(lhs->components().size(), 0);
+
+	TypePointers rightTypes;
+	unrollTuple(_assignment.rightHandSide().annotation().type, rightTypes);
+	if (rightTypes.size() >= 2) {
+		m_pusher.reverse(rightTypes.size(), 0);
 	}
-	int i = 0;
-	for (const auto & leftComp : lhs->components()) {
-		if (leftComp == nullptr) {
-			m_pusher.drop();
-		} else {
-			if (auto rightType = to<TupleType>(rhs.annotation().type)) {
-				m_pusher.convert(leftComp->annotation().type, rightType->components().at(i));
-			} else {
-				solAssert(lhs->components().size() == 1, "");
-				m_pusher.convert(leftComp->annotation().type, rhs.annotation().type);
-			}
-			const int stackSizeForValue = m_pusher.stackSize();
-			const LValueInfo lValueInfo = expandLValue(leftComp.get(), false);
-			const int stackSize = m_pusher.stackSize();
-			const int expandLValueSize = stackSize - stackSizeForValue;
-			if (expandLValueSize > 0) {
-				m_pusher.blockSwap(1, expandLValueSize);
-			}
-			collectLValue(lValueInfo, true);
-		}
-		++i;
-	}
+	int index = 0;
+	assignTuple(lhs, rightTypes, index);
 	return true;
 }
 

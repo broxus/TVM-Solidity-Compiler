@@ -39,8 +39,6 @@
 #include <tuple>
 #include <vector>
 
-#include <libsolidity/codegen/TVMConstants.hpp>
-
 using namespace solidity::langutil;
 using namespace std::string_literals;
 
@@ -111,6 +109,7 @@ ASTPointer<SourceUnit> Parser::parse(CharStream& _charStream)
 			case Token::Import:
 				nodes.push_back(parseImportDirective());
 				break;
+			case Token::Hash:
 			case Token::Abstract:
 			case Token::Interface:
 			case Token::Contract:
@@ -241,11 +240,6 @@ ASTPointer<PragmaDirective> Parser::parsePragmaDirective(bool const _finishedPar
 				literal = TokenTraits::toString(token);
 			literals.push_back(literal);
 			tokens.push_back(token);
-			if (literal == "msgValue") {
-				m_scanner->next(); // skip "msgValue"
-				parameter.emplace_back(parsePrimaryExpression());
-				break;
-			}
 			if (literal == "copyleft") {
 				m_scanner->next(); // skip "copyleft"
 				parameter.emplace_back(parsePrimaryExpression());
@@ -377,6 +371,95 @@ std::pair<ContractKind, bool> Parser::parseContractKind()
 	return std::make_pair(kind, abstract);
 }
 
+std::tuple<ASTPointer<ExternalMsgHeaders>, ASTPointer<ReplayProtection>, bool> Parser::parseAttributes() {
+	ASTPointer<ExternalMsgHeaders> externalMsgHeaders;
+	ASTPointer<ReplayProtection> replayProtection;
+	bool isContractLibrary = false;
+
+	auto checkReplayProtection = [&]() {
+		if (replayProtection != nullptr) {
+			m_errorReporter.declarationError(
+				9890_error,
+				currentLocation(),
+				SecondarySourceLocation().append("Another declaration is here:", replayProtection->location()),
+				"Only one replay protection attribute is allowed."
+			);
+		}
+	};
+
+	while (m_scanner->currentToken() == Token::Hash) {
+		ASTNodeFactory nodeFactory2(*this);
+		expectToken(Token::Hash, true);
+		expectToken(Token::LBrack, true);
+		if (currentToken() == Token::Identifier && currentLiteral() == "ExternalMessage") {
+			if (externalMsgHeaders != nullptr) {
+				m_errorReporter.declarationError(
+					9854_error,
+					currentLocation(),
+					SecondarySourceLocation().append("Another declaration is here:", externalMsgHeaders->location()),
+					"Only one \"ExternalMessage\" attribute is allowed."
+				);
+			}
+
+			advance();
+			expectToken(Token::LParen, true);
+			std::vector<std::string> headerNames;
+			std::vector<SourceLocation> headerLocations;
+			while (currentToken() == Token::Identifier) {
+				auto const header = currentLiteral();
+				if (header != "time" && header != "expire" && header != "pubkey") {
+					fatalParserError(5568_error, "Expected time/expire/pubkey header.");
+				}
+				headerNames.push_back(header);
+				headerLocations.push_back(currentLocation());
+				advance();
+				if (currentToken() == Token::RParen) {
+					break;
+				}
+				expectToken(Token::Comma, true);
+			}
+			expectToken(Token::RParen, true);
+			expectToken(Token::RBrack, true);
+
+			nodeFactory2.markEndPosition();
+			externalMsgHeaders = nodeFactory2.createNode<ExternalMsgHeaders>(headerNames, headerLocations);
+		} else if (currentToken() == Token::Identifier && currentLiteral() == "TimeReplayProt") {
+			checkReplayProtection();
+			advance();
+			expectToken(Token::RBrack, true);
+
+			nodeFactory2.markEndPosition();
+			replayProtection = nodeFactory2.createNode<ReplayProtection>(ReplayProtection::ReplayProtectionType::TimeReplayProt);
+		} else if (currentToken() == Token::Identifier && currentLiteral() == "SeqnoReplayProt") {
+			checkReplayProtection();
+			advance();
+			expectToken(Token::RBrack, true);
+
+			nodeFactory2.markEndPosition();
+			replayProtection = nodeFactory2.createNode<ReplayProtection>(ReplayProtection::ReplayProtectionType::SeqnoReplayProt);
+		} else if (currentToken() == Token::Identifier && currentLiteral() == "CustomReplayProt") {
+			checkReplayProtection();
+			advance();
+			expectToken(Token::RBrack, true);
+
+			nodeFactory2.markEndPosition();
+			replayProtection = nodeFactory2.createNode<ReplayProtection>(ReplayProtection::ReplayProtectionType::CustomReplayProt);
+		} else if (currentToken() == Token::Identifier && currentLiteral() == "Library") {
+			checkReplayProtection();
+			advance();
+			expectToken(Token::RBrack, true);
+
+			nodeFactory2.markEndPosition();
+			isContractLibrary = true;
+		} else {
+			fatalParserError(9041_error, "Keyword ExternalMessage/TimeReplayProt/SeqnoReplayProt/CustomReplayProt expected.");
+		}
+	}
+
+
+	return {externalMsgHeaders, replayProtection, isContractLibrary};
+}
+
 ASTPointer<ContractDefinition> Parser::parseContractDefinition()
 {
 	RecursionGuard recursionGuard(*this);
@@ -388,6 +471,7 @@ ASTPointer<ContractDefinition> Parser::parseContractDefinition()
 	std::vector<ASTPointer<ASTNode>> subNodes;
 	std::pair<ContractKind, bool> contractKind{};
 	documentation = parseStructuredDocumentation();
+	auto [externalMsgHeaders, replayProtection, isContractLibrary] = parseAttributes();
 	contractKind = parseContractKind();
 	std::tie(name, nameLocation) = expectIdentifierWithLocation();
 	if (m_scanner->currentToken() == Token::Is)
@@ -452,7 +536,10 @@ ASTPointer<ContractDefinition> Parser::parseContractDefinition()
 		baseContracts,
 		subNodes,
 		contractKind.first,
-		contractKind.second
+		contractKind.second,
+		externalMsgHeaders,
+		replayProtection,
+		isContractLibrary
 	);
 }
 
@@ -892,6 +979,7 @@ ASTPointer<VariableDeclaration> Parser::parseVariableDeclaration(
 	Visibility visibility(Visibility::Default);
 	bool isStatic{false};
 	bool isNoStorage{false};
+	bool isUnchecked{false};
 	ASTPointer<ASTString> identifier;
 	SourceLocation nameLocation{};
 
@@ -935,6 +1023,14 @@ ASTPointer<VariableDeclaration> Parser::parseVariableDeclaration(
 				parserError(2643_error, "NoStorage already specified.");
 
 			isNoStorage = true;
+			m_scanner->next();
+		}
+		else if (_options.kind == VarDeclKind::State && token == Token::Unpacked)
+		{
+			if (isUnchecked)
+				parserError(6539_error, "Unchecked already specified.");
+
+			isUnchecked = true;
 			m_scanner->next();
 		}
 		else
@@ -995,7 +1091,8 @@ ASTPointer<VariableDeclaration> Parser::parseVariableDeclaration(
 		mutability,
 		overrides,
 		isStatic,
-		isNoStorage
+		isNoStorage,
+		isUnchecked
 	);
 }
 
@@ -1885,6 +1982,7 @@ ASTPointer<VariableDeclaration> Parser::parsePostfixVariableDeclaration()
 		false,
 		VariableDeclaration::Mutability::Mutable,
 		nullptr,
+		false,
 		false,
 		false,
 		type

@@ -18,10 +18,25 @@ function __QOR(qint a, qint b) assembly pure returns (qint) {
 }
 
 contract stdlib {
-    function __replayProtection(uint64 msg_timestamp) view private {
-        require(tvm.replayProtTime() < msg_timestamp, 52);
-        require(msg_timestamp < block.timestamp * 1000 + tvm.replayProtInterval(), 52);
-        tvm.setReplayProtTime(msg_timestamp);
+    function __timeReplayProtection(TvmSlice msgBody) view private returns(TvmSlice) {
+        uint64 timestamp = msgBody.load(uint64);
+        require(tvm.replayProtectionValue() < timestamp, 52);
+        require(timestamp < block.timestamp * 1000 + tvm.replayProtInterval(), 52);
+        tvm.setReplayProtectionValue(timestamp);
+        return msgBody;
+    }
+
+    function __seqnoReplayProtection(TvmSlice msgBody) view private returns(TvmSlice) {
+        uint64 seqno = msgBody.load(uint64);
+        require(tvm.replayProtectionValue() + 1 == seqno, 52);
+        tvm.setReplayProtectionValue(seqno);
+        return msgBody;
+    }
+
+    function __checkExpire(TvmSlice msgBody) pure private returns(TvmSlice) {
+        uint32 expireAt = msgBody.load(uint32);
+        require(block.timestamp < expireAt, 57);
+        return msgBody;
     }
 
     function __tonToGas(uint128 _ton, bool isMasterChain) private pure returns(uint128) {
@@ -470,7 +485,7 @@ contract stdlib {
     }
 
     // check whether `str` starts with `prefix`
-    function __isPrefix(TvmSlice str, TvmSlice prefix) private pure inline returns (bool equal) {
+    function __isPrefix(TvmSlice str, TvmSlice prefix) private pure inline returns (bool) {
         uint10 strBits = str.bits();
         uint10 prefixBits = prefix.bits();
         while (!prefix.empty()) {

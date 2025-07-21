@@ -7,6 +7,10 @@ When deploying contracts, you should use the latest released version of Solidity
 ## Table of Contents
 
 * [Compiler version](#compiler-version)
+* [Receiving external messages](#receiving-external-messages)
+  * [ExternalMessage](#ExternalMessage)
+  * [Replay protection](#replay-protection)
+  * [externalMsg and internalMsg](#externalmsg-and-internalmsg) 
 * [TVM specific types](#tvm-specific-types)
   * [TVM units](#tvm-units)
   * [TvmCell](#tvmcell)
@@ -198,6 +202,7 @@ When deploying contracts, you should use the latest released version of Solidity
   * [require, revert](#require-revert)
     * [require](#require)
     * [revert](#revert)
+  * [Contract-library](#contract-library)
   * [Libraries](#libraries)
     * [Function call via library name](#function-call-via-library-name)
     * [Function call via object](#function-call-via-object)
@@ -206,15 +211,13 @@ When deploying contracts, you should use the latest released version of Solidity
   * [pragma tvm-solidity](#pragma-tvm-solidity)
   * [pragma copyleft](#pragma-copyleft)
   * [pragma ignoreIntOverflow](#pragma-ignoreintoverflow)
-  * [pragma AbiHeader](#pragma-abiheader)
-  * [pragma msgValue](#pragma-msgvalue)
   * [pragma upgrade oldsol](#pragma-upgrade-oldsol)
 * [State variables](#state-variables)
   * [Decoding state variables](#decoding-state-variables)
   * [Keyword `constant`](#keyword-constant)
   * [Keyword `static`](#keyword-static)
+  * [Keyword `unpacked`](#keyword-unpacked)
   * [Keyword `nostorage`](#keyword-nostorage)
-  * [Keyword `public`](#keyword-public)
 * [Special contract functions](#special-contract-functions)
   * [getter](#getter)
   * [receive](#receive)
@@ -228,7 +231,6 @@ When deploying contracts, you should use the latest released version of Solidity
   * [Keyword inline](#keyword-inline)
   * [Assembly](#assembly)
   * [functionID()](#functionid)
-  * [externalMsg and internalMsg](#externalmsg-and-internalmsg)
 * [Events and return](#events-and-return)
   * [emit](#emit)
   * [return](#return)
@@ -238,7 +240,6 @@ When deploying contracts, you should use the latest released version of Solidity
   * [Type information](#type-information)
   * [**msg** namespace](#msg-namespace)
     * [msg.sender](#msgsender)
-    * [msg.value](#msgvalue)
     * [msg.currencies](#msgcurrencies)
     * [msg.pubkey()](#msgpubkey)
     * [msg.isInternal, msg.isExternal and msg.isTickTock](#msgisinternal-msgisexternal-and-msgisticktock)
@@ -264,6 +265,7 @@ When deploying contracts, you should use the latest released version of Solidity
       * [tvm.rawConfigParam()](#tvmrawconfigparam)
       * [tvm.rawReserve()](#tvmrawreserve)
       * [tvm.initCodeHash()](#tvminitcodehash)
+      * [tvm.loadLibrary()](#tvmloadlibrary)
     * [Hashing and cryptography](#hashing-and-cryptography)
       * [tvm.hash()](#tvmhash)
       * [sha256()](#sha256)
@@ -285,6 +287,9 @@ When deploying contracts, you should use the latest released version of Solidity
       * [tvm.resetStorage()](#tvmresetstorage)
       * [tvm.exit() and tvm.exit1()](#tvmexit-and-tvmexit1)
       * [tvm.sendrawmsg()](#tvmsendrawmsg)
+      * [tvm.sendMsg()](#tvmsendmsg)
+      * [tvm.packData()](#tvmpackdata)
+      * [tvm.unpackData()](#tvmunpackdata)
   * [**bls** namespace](#bls-namespace)
     * [bls.verify()](#blsverify)
     * [bls.aggregate()](#blsaggregate)
@@ -362,6 +367,88 @@ using [ever-cli](https://github.com/everx-labs/ever-cli#48-decode-commands) from
 
 ```bash
 ever-cli decode tvc [--tvc] [--boc] <input>
+```
+
+### Receiving external messages
+
+By default, the contract does not receive external messages. Note, keywords `external` and `public` define only
+[function visibility](https://docs.soliditylang.org/en/latest/cheatsheet.html#function-visibility-specifiers).
+
+```TVMSolidity
+// The contract has 2 functions that receive only internal messages
+contract C {  
+    function f() external {  }
+    function g() public {  }
+}
+```
+
+To receive external messages, use `ExternalMessage` attribute and an attribute for replay protection.
+Use `externalMsg` modifier for functions that receive external messages. 
+
+```TVMSolidity
+#[ExternalMessage(time,expire)]
+#[TimeReplayProt]
+contract C {
+    // `f` and `g` receive only internal messages
+    function f() external {  }
+    function g() public {  }
+
+    // `f2` and `g2` receive only external messages    
+    function f2() externalMsg external {  }
+    function g2() externalMsg public {  }
+}
+```
+
+See also [externalMsg and internalMsg](#externalmsg-and-internalmsg).
+
+#### ExternalMessage
+
+`#[ExternalMessage(...)]` attribute is used to define headers that are used for external messages.
+
+Possible values:
+ - time (`uint64`) - local time when the message was created, used for replay protection
+ - pubkey (`bytes32`) - optional public key that the message can be signed with. 
+ - expire (`uint32`) - time when the message should be meant as expired. See `__checkExpire` in [stdlib.sol](./lib/stdlib.sol)
+
+#### Replay protection
+
+Replay protection attributes:
+ - `#[TimeReplayProt]` - use header [time](#ExternalMessage) as timestamp for replay protection. See `__timeReplayProtection` in [stdlib.sol](./lib/stdlib.sol).
+ - `#[SeqnoReplayProt]` - use header [time](#ExternalMessage) as seqno for replay protection. See `__seqnoReplayProtection` in [stdlib.sol](./lib/stdlib.sol).
+ - `#[CustomReplayProt]` - use [afterSignatureCheck](#afterSignatureCheck) for custom replay protection.
+
+```TVMSolidity
+#[ExternalMessage(time,expire)]
+#[TimeReplayProt]
+contract C { }
+
+#[ExternalMessage(time,expire,pubkey)]
+#[SeqnoReplayProt]
+contract C2 { }
+```
+
+#### externalMsg and internalMsg
+
+Keywords `externalMsg` and `internalMsg` specify which messages the function can handle.
+
+Example:
+
+```TVMSolidity
+// this function receives only external messages
+function f() public externalMsg { /*...*/ }
+
+// Note: keyword `external` specifies function visibility
+// This function receives only external messages
+function f2() external externalMsg { /*...*/ }
+
+// This function receives only internal messages
+function f3() public internalMsg { /*...*/ }
+
+// This function receives only internal
+function f4() public { /*...*/ }
+
+// This function receives internal and external messages
+function f5() public internalMsg externalMsg { /*...*/ }
 ```
 
 ### TVM specific types
@@ -2987,6 +3074,72 @@ revert(102, "We have a some problem"); // throw exception 102 and string
 revert(101, a); // throw exception 101 and number a
 ```
 
+#### Contract-library
+
+Use the ```#[Library]``` attributes to create the contact that can be used as library.
+Example of a contract that can be used as a library:
+
+```TVMSolidity
+pragma tvm-solidity >= 0.78.0;
+
+#[Library]
+contract MyMathLibrary {
+
+	function _add(uint a, uint b) internal pure returns(uint) {
+		return a + b;
+	}
+
+	function add(uint a, uint b) external pure returns(uint) {
+		return _add(a, b);
+	}
+
+	function sub(uint a, uint b) external pure returns(uint) {
+		return a - b;
+	}
+
+	function addSub(uint a, uint b) external pure returns(uint, uint) {
+		return (a + b, a - b);
+	}
+}
+```
+
+Example of a usage contract-library:
+
+```TVMSolidity
+pragma tvm-solidity >= 0.78.0;
+
+import "test_lib_01a.sol";
+
+#[ExternalMessage(time,expire)]
+#[TimeReplayProt]
+contract Test {
+
+	TvmCell libCell;
+
+	constructor(uint _libHash) externalMsg {
+		libCell = tvm.loadLibrary(_libHash);
+	}
+
+	function testAdd(uint a, uint b) externalMsg public view returns(uint) {
+		tvm.accept();
+		MyMathLibrary lib = MyMathLibrary(libCell);
+		return lib.add(a, b);
+	}
+
+	function testSub(uint a, uint b) externalMsg public view returns(uint) {
+		tvm.accept();
+		MyMathLibrary lib = MyMathLibrary(libCell);
+		return lib.sub(a, b);
+	}
+
+	function testAddSub(uint a, uint b) externalMsg public view returns(uint, uint) {
+		tvm.accept();
+		MyMathLibrary lib = MyMathLibrary(libCell);
+		return lib.addSub(a, b);
+	}
+}
+```
+
 #### Libraries
 
 Libraries are similar to contracts, but they can't have state variables
@@ -3185,55 +3338,26 @@ uint8 c = a - b; // c == -1, no exception thrown
 
 See also: [unchecked block](#unchecked-block).
 
-#### pragma AbiHeader
-
-```TVMSolidity
-pragma AbiHeader notime;
-pragma AbiHeader pubkey;
-pragma AbiHeader expire;
-```
-
-Defines headers that are used in external messages:
-
-* `notime` - disables `time` abi header, which is enabled by default. Abi header `time` – `uint64` local time when message was created, used for replay protection
-* `pubkey` (`uint256`) - optional public key that the message can be signed with.
-* `expire` (`uint32`)  - time when the message should be meant as expired.
-
-**Note:**
-
-Defined headers are listed in `*.abi.json` file in `header` section.
-
-See also: [Contract execution](#contract-execution), [afterSignatureCheck](#aftersignaturecheck),
-[msg.pubkey()](#msgpubkey) and [tvm.pubkey()](#tvmpubkey).
-To read more about these fields and ABI follow this [link](https://docs.ton.dev/86757ecb2/p/40ba94-abi-specification-v2).
-Here is example of [message expiration time](https://docs.ton.dev/86757ecb2/p/88321a-message-expiration-time) usage.
-
-#### pragma msgValue
-
-```TVMSolidity
-pragma msgValue <value>;
-```
-
-Allows specifying default value in nanoevers attached to the
-internal outbound messages used to call another contract. If it's not
-specified, this value is set to 10 000 000 nanoevers.
-
-Example:
-
-```TVMSolidity
-pragma msgValue 123456789;
-pragma msgValue 1e8;
-pragma msgValue 10 ever;
-pragma msgValue 10_000_000_123;
-```
-
 #### pragma upgrade oldsol
 
 ```TVMSolidity
 pragma upgrade oldsol;
 ```
 
-Defines that code is compiled with special selector that is needed to upgrade Solidity contracts.
+Defines that code is compiled with special selector needed to upgrade 
+old Solidity contracts (that use old selector).
+
+```TVMSolidity
+pragma upgrade oldsol;
+
+contract NewContract {
+
+    function onCodeUpgrade(...) private functionID(2) {
+        tvm.resetStorage();
+        ...
+    }
+}
+```
 
 ### State variables
 
@@ -3275,6 +3399,32 @@ See also:
 * [`code` option usage](#code-option-usage)
 * [New contract address problem](#new-contract-address-problem)
 
+#### Keyword `unpacked`
+
+`unpacked` state variables are not unpacked from register C4 to register C7 as usual state variables.
+Use the keyword for variables that are used seldom or if you have a lot of state variables 
+and it takes much gas to unpack them.
+
+```TVMSolidity
+contract C {
+    uint m_value;
+    uint m_value2;
+    address_std unpacked m_addr;
+    uint unpacked static m_value3; // Note: unpacked state variable can be static one
+    uint unpacked m_value4;
+
+    function f() public {
+        (address_std addr, uint value3) = tvm.unpackData(m_addr, m_value3);
+        // ...
+        tvm.packData({m_addr: addr, m_value3: value3});
+    }
+}
+```
+
+See also:
+ * [tvm.packData()]()
+ * [tvm.unpackData()]()
+
 #### Keyword `nostorage`
 
 `nostorage` state variables are not saved in the contract's storage. They have default values at the
@@ -3283,27 +3433,12 @@ beginning of each transaction.
 ```TVMSolidity
 contract C {
     uint nostorage m_value;
+    
     function f() public {
         // here m_value == 0
         ++m_value;  
         // here m_value == 1
     }
-}
-```
-
-#### Keyword `public`
-
-For each public state variable, a getter function is generated. Generated
-function has the same name and return type as the public variable. This
-function can be called only locally. Public state variables are useful,
-because you don't need to write functions that return a particular state variable manually.
-
-Example:
-
-```TVMSolidity
-contract C {
-    uint public a;
-    uint public static b; // it's ok. Variable is both public and static.
 }
 ```
 
@@ -3666,34 +3801,6 @@ function f() public pure functionID(123) {
 }
  ```
 
-#### externalMsg and internalMsg
-
-Keywords `externalMsg` and `internalMsg` specify which messages the function can handle.
-If the function marked by keyword `externalMsg` is called by internal message, the function throws an
-exception with code 71.
-If the function marked by keyword `internalMsg` is called by external message, the function throws
-an exception with code 72.
-
-Example:
-
-```TVMSolidity
-function f() public externalMsg { // this function receives only external messages
-    /*...*/
-}
-
-// Note: keyword `external` specifies function visibility
-function ff() external externalMsg { // this function also receives only external messages
-    /*...*/
-}
-
-function g() public internalMsg { // this function receives only internal messages
-    /*...*/
-}
-
-// These function receives both internal and external messages.
-function fun() public { /*...*/ }
-```
-
 ### Events and return
 
 #### emit
@@ -3780,11 +3887,11 @@ interface IContract {
 
 contract Caller {
     function callExt(address addr) public {
-        IContract(addr).f(123); // attached default value: 0.01 ever
+        TvmCell stateInit = ...;
         IContract(addr).f{value: 10 ever}(123);
         IContract(addr).f{value: 10 ever, flag: 3}(123);
         IContract(addr).f{value: 10 ever, bounce: true}(123);
-        IContract(addr).f{value: 1 micro, bounce: false, flag: 128}(123);
+        IContract(addr).f{value: 1 micro, bounce: false, flag: 128, stateInit: stateInit}(123);
         mapping(uint32 => varuint32) cc;
         cc[12] = 1000;
         IContract(addr).f{value: 10 ever, currencies:cc}(123);
@@ -3954,7 +4061,7 @@ msg.pubkey() returns (uint256);
 ```
 
 Returns public key that is used to check the message signature. If the message isn't signed, then it's equal to `0`.
-See also: [Contract execution](#contract-execution), [pragma AbiHeader](#pragma-abiheader).
+See also: [Contract execution](#contract-execution), [ExternalMessage](#externalmessage).
 
 ##### msg.isInternal, msg.isExternal and msg.isTickTock
 
@@ -4316,6 +4423,11 @@ uint256 hash = tvm.hash(TvmCell cellTree);
 uint256 hash = tvm.hash(string);
 uint256 hash = tvm.hash(bytes);
 ```
+
+##### tvm.loadLibrary()
+
+Creates library reference cell. It's an exotic cell.
+See [Contract-library](#contract-library).
 
 ##### sha256()
 
@@ -4682,7 +4794,27 @@ completion of the computation phase are not taken into account).
 
 See also: [Sending messages](https://docs.ton.org/learn/tvm-instructions/tvm-upgrade-2023-07#sending-messages).
 
-#### **bls** namespace
+#### tvm.packData()
+
+```TVMSolidity
+tvm.packData({stateVar0: value0, stateVar1: value1, ...})
+```
+
+Updates `unpacked` state variables.
+
+See also: [Keyword unpacked](#keyword-unpacked).
+
+#### tvm.unpackData()
+
+```TVMSolidity
+tvm.unpackData(stateVar0, stateVar1, ...) returns (T0, T1, ...)
+```
+
+Unpacks `unpacked` state variables.
+
+See also: [Keyword unpacked](#keyword-unpacked).
+
+### **bls** namespace
 
 Operations on a pairing friendly BLS12-381 curve. BLS values are represented in TVM in the following way:
   * G1-points and public keys: 48-byte slice.
@@ -5328,7 +5460,7 @@ TvmCell cell = abi.encode(uint(1), uint(2), uint(3), uint(4));
 ##### abi.encodeData()
 
 ```TVMSolidity
-abi.encodeData({uint256 pubkey, contract Contract, varInit: {VarName0: varValue0, ...}});
+abi.encodeData({uint256 pubkey, ContractType contr, varInit: {varName0: varValue0, ...}});
 ```
 
 Generates `data` field of the `StateInit` ([TBLKCH][2] - 3.1.7.). Parameters are the same as in
@@ -5418,9 +5550,9 @@ contract ContractCreator {
 
 ```TVMSolidity
 abi.decodeData(ContractName, TvmSlice) returns (
-    uint256 /*pubkey*/, 
-    uint64 /*timestamp*/,
-    bool /*constructorFlag*/,
+    [uint256 /*pubkey*/], 
+    [uint64 /*timestamp*/],
+    [bool /*constructorFlag*/],
     Type1 /*var1*/,
     Type2 /*var2*/, 
     ...
@@ -5432,6 +5564,8 @@ Loads state variables from `TvmSlice` that is obtained from the field `data` of 
 Example:
 
 ```
+#[ExternalMessage(time,expire)]
+#[TimeReplayProt]
 contract A {
     uint a = 111;
     uint b = 22;
@@ -5451,6 +5585,32 @@ contract B {
         // pubkey - pubkey of the contract A
         // timestamp - timestamp that used for replay protection
         // flag - constructor flag is set if the contract is deployed
+        // a == 111
+        // b == 22
+        // c == 3
+        // d == 44
+        // e == address(12)
+        // f == address.addrNone
+    }
+}
+```
+
+```
+contract A {
+    uint a = 111;
+    uint b = 22;
+    uint c = 3;
+    uint d = 44;
+    address e = address(12);
+    address f;
+    constructor() {}
+}
+
+contract B {
+    function f(TvmCell data) public pure {
+        TvmSlice s = data.toSlice();
+        (uint a, uint b, uint c, uint d, address e, address f) = abi.decodeData(A, s);
+            
         // a == 111
         // b == 22
         // c == 3
@@ -5549,7 +5709,7 @@ uint16 dataDepth = data.depth();
 uint256 hash = abi.stateInitHash(codeHash, dataHash, codeDepth, dataDepth);
 ```
 
-See also [internal doc](https://github.com/everx-labs/TVM-Solidity-Compiler/blob/main/docs/internal/stateInit_hash.md) to read more about this
+See also [internal doc](https://github.com/broxus/TVM-Solidity-Compiler/blob/main/docs/internal/stateInit_hash.md) to read more about this
 function mechanics.
 
 ##### abi.encodeBody()
@@ -5811,7 +5971,7 @@ gasToValue(coins gas) returns (coins value)
 gasToValue(coins gas, bool isMasterchain) returns (coins value)
 ```
 
-(1) Returns worth of **gas** on the contract's `wid`.
+(1) Returns worth of **gas** on the contract's `wid`. Required: `--tvm-version ever`.
 
 (2) Returns worth of **gas** on masterchain or workchain.
 
@@ -5819,12 +5979,14 @@ gasToValue(coins gas, bool isMasterchain) returns (coins value)
 #### valueToGas
 
 ```TVMSolidity
+(1)
 valueToGas(coins value) returns (coins gas)
+(2)
 valueToGas(coins value, bool isMasterchain) returns (coins gas)
 ```
 
-Counts how much **gas** could be bought on **value** nanoevers in masterchain or workchain.
-If `wid` is omitted than used the contract's `wid`.
+(1) Counts how much **gas** could be bought on **value** nanoevers. Required: `--tvm-version ever`.
+(2) Counts how much **gas** could be bought on **value** nanoevers in masterchain or workchain.
 
 #### gasleft()
 
@@ -5847,7 +6009,7 @@ Returns gas consumed by VM so far (including this instruction). Required: `--tvm
 
 Rust implementation of TVM has capabilities. Capabilities are flags that can be set to turn on 
 some features or behavior of TVM. Full list of capabilities can be found in `enum GlobalCapabilities` in [ever-block](https://github.com/everx-labs/ever-block/blob/main/src/config_params.rs) repo.
-Set capabilities store in 8th parameter of the global config of the blockchain. To get it you can use command:
+Set capabilities store in 8th parameter of the global config of the blockchain. To get it, you can use command:
 ```bash
 ever-cli --json getconfig 8
 ```
@@ -5876,26 +6038,26 @@ See also: [TVM][1] - 4.5.7
 Smart-contract written in TVM Solidity can throw runtime errors while execution.
 
 Solidity runtime error codes:
-  * **11** - There's no private function with the function id.
+  * **11** - There's no private function with the function ID. Or the contract received an external message, but the contract does not have the attribute [ExternalMessage](#ExternalMessage). 
   * **40** - External inbound message has an invalid signature. See [tvm.pubkey()](#tvmpubkey) and [msg.pubkey()](#msgpubkey).
   * **50** - Array index or index of [\<mapping\>.at()](#mappingat) is out of range.
   * **51** - Contract's constructor has already been called.
-  * **52** - Replay protection exception. See `timestamp` in [pragma AbiHeader](#pragma-abiheader).
+  * **52** - Replay protection exception. See `time` in [Replay protection](#replay-protection).
   * **54** - `<array>.pop` call for an empty array.
-  * **57** - External inbound message is expired. See `expire` in [pragma AbiHeader](#pragma-abiheader).
-  * **58** - External inbound message has no signature but has public key. See `pubkey` in [pragma AbiHeader](#pragma-abiheader).
-  * **60** - Inbound message has wrong function id. In the contract there are no functions with such function id and there is no fallback function that could handle the message. See [fallback](#fallback).
+  * **57** - External inbound message is expired. See `expire` in [ExternalMessage](#externalmessage).
+  * **58** - External inbound message has no signature but has public key. See `pubkey` in [ExternalMessage](#externalmessage).
+  * **60** - Inbound message has wrong function id. In the contract there are no functions with such function id and 
+there is no fallback function that could handle the message. See [fallback](#fallback).
+Or the function was called by external message but the function is not marked as [externalMsg](#externalmsg-and-internalmsg). 
   * **61** - Deploying `StateInit` has no public key in `data` field.
   * **62** - Reserved for internal usage.
   * **63** - See [\<optional(T)\>.get()](#optionaltget).
   * **68** - There is no config parameter 20 or 21.
   * **69** - Zero to the power of zero calculation (`0**0` in TVM Solidity style or `0^0`).
   * **70** - `string` method `substr` was called with substr longer than the whole string.
-  * **71** - Function marked by `externalMsg` was called by internal message.
-  * **72** - Function marked by `internalMsg` was called by external message.
-  * **76** - Public function was called before constructor.
-  * **77** - It's impossible to convert `variant` type to target type. See [variant.toUint()](#varianttouint).
-  * **79** - You are deploying contract that uses [pragma upgrade func/oldsol](#pragma-upgrade-funcoldsol). Use the 
+  * **76** - Public function or fallback function was called before constructor.
+  * **77** - It's impossible to convert `variant` type to target type. See [variant.toUint()](#varianttouint). 
+  * **79** - In new code use `function onCodeUpgrade(...) private functionID(2)`. See [pragma upgrade oldsol](#pragma-upgrade-oldsol). 
   * **80** - See [\<T\>.get()](#tget).
 
 ### Division and rounding
@@ -5903,7 +6065,7 @@ Solidity runtime error codes:
 Let consider we have `x` and `y` and we want to divide `x` by `y`. Compute the quotient `q` and the
 remainder `r` of the division of `x` by `y`: `x = y*q + r` where `|r| < |y|`.
 
-In TVM there are 3 options of rounding:
+In TVM there are three options of rounding:
 
 * **floor** - quotient `q` is rounded to −∞. `q = ⌊x/y⌋`, `r` has the same sign as `y`. This
 rounding option is used for operator `/`.
@@ -5956,7 +6118,7 @@ Before calling contract's function `main_external` does:
    - If signature isn't exists, `pubkey` header is defined and `pubkey` exists in the
    message, then an [exception with code 58](#solidity-runtime-errors) is thrown.
 2. Replay protection:
-   - [*time* header](#pragma-abiheader) exists (`pragma AbiHeader notime` is not used), then the contract checks whether
+   - *time* header exist, then the contract checks whether
    `oldTime` < `time` < `now * 1000 + 30 minutes`. If it's true, then `oldTime` is updated by new `time`.
    Otherwise, an exception is thrown.
    - there is `afterSignatureCheck` (despite usage of `time`), then make your own replay protection.
@@ -5965,39 +6127,140 @@ Before calling contract's function `main_external` does:
    `expire` > `now`.
    - there is `afterSignatureCheck` (despite usage of `expire`), then make your own check.
 
-See also: [pragma AbiHeader](#pragma-abiheader), [afterSignatureCheck](#aftersignaturecheck).
+See also: [ExternalMessage](#externalmessage), [afterSignatureCheck](#aftersignaturecheck).
 
 ### Gas optimization hints
 
-Try to reduce count of `[]` operations for mappings and arrays. For example:
+* Use the latest released version of Solidity.
+* Try to reduce the count and size of state variables. For example:
+  * Instead of `uint` use `uint120` (or `coins`) type for number of coins, if it's acceptable
+  * Instead of `address` use `address_std` type.  `address` can take up to 591 bits to storing `addr_var`. So, two state variables of `address` type cannot be fitted in one cell. 
 
-```TVMSolidity
-Struct Point {
-    uint x;
-    uint y;
-    uint z;
-}
+  ```TVMSolidity
+  // Bad storage packing. It takes 3 cells
+  contract C {
+      address owner;       // in the first cell
+      uint totalShares;    // in the second cell
+      uint totalPool;      // in the second cell 
+      uint yield;          // in the second cell
+      uint yieldForHolder; // in the third cell
+  }
+  
+  // Better storage packing. It takes 1 cells
+  contract C {
+      address_std owner;      // in the first cell
+      uint120 totalShares;    // in the first cell
+      uint120 totalPool;      // in the first cell 
+      uint120 yield;          // in the first cell
+      uint120 yieldForHolder; // in the first cell
+  }
+  ```
+  * If you use unpacked state variable than call only once `tvm.unpackData()` and `tvm.packdata()` in the transaction.
+  ```TVMSolidity
+  contract C {
+      uint m_value;
+      uint m_value2;
+      address_std unpacked m_addr;
+      uint unpacked static m_value3; // Note: unpacked state variable can be static one
+      uint unpacked m_value4;
 
-Point[] points;
-```
+      // Bad function
+      function bad_f() public {
+          (address_std addr) = tvm.unpackData(m_addr);
+          (uint value3) = tvm.unpackData(m_value3);
+          // ...
+          tvm.packData({m_addr: addr});
+          tvm.packData({m_value3: value3});
+      }
+    
+      // Good function
+      function f() public {
+          (address_std addr, uint value3) = tvm.unpackData(m_addr, m_value3);
+          // ...
+          tvm.packData({m_addr: addr, m_value3: value3});
+      }
+  }
+  ```
+* Try to reduce count of `[]` operations for mappings and arrays. For example:
 
-Here we have 3 `[]` operations:
+  ```TVMSolidity
+  Struct Point {
+      uint x;
+      uint y;
+      uint z;
+  }
+  
+  Point[] points;
+  ```
+  
+  Here we have 3 `[]` operations:
+  
+  ```TVMSolidity
+  points[0].x = 5;
+  points[0].y = 10;
+  points[0].z = -5;
+  ```
+  
+  We can use a temp variable:
+  
+  ```TVMSolidity 
+  Point p = points[0];
+  p.x = 5;
+  p.y = 10;
+  p.z = -5;
+  points[0] = p;
+  ```
 
-```TVMSolidity
-points[0].x = 5;
-points[0].y = 10;
-points[0].z = -5;
-```
+* Try to merge mappings if you work with them simultaneously:
+  ```TVMSolidity 
+    mapping(address_std => uint120) pendingDeposit;
+    mapping(address_std => uint120) claimableDeposit;
+  
+    // Updating mapping is expensive operaion.
+    // We update 2 mappings.
+    pendingDeposit[owner] -= pending;
+    claimableDeposit[owner] += claimable;
+  ```
 
-We can use a temp variable:
+  Better code
+  ```TVMSolidity 
+    struct DepositInfo {
+      uint120 pending;
+      uint120 claimable;
+    }
+    mapping(address_std => DepositInfo) depositInfo;
+  
+    DepositInfo info = depositInfo[owner];
+    info.pending -= pending;
+    info.claimable += claimable;
+    // We update only one mapping 
+    depositInfo[owner] = info;
+  ```
 
-```TVMSolidity
-Point p = points[0];
-p.x = 5;
-p.y = 10;
-p.z = -5;
-points[0] = p;
-```
+* Use compound functions for mappings:
+  * [\<mapping\>.replace()](#mappingreplace)
+  * [\<mapping\>.add()](#mappingadd)
+  * [\<mapping\>.getSet()](#mappinggetset)
+  * [\<mapping\>.getAdd()](#mappinggetadd)
+  * [\<mapping\>.getDel()](#mappinggetdel)
+  * [\<mapping\>.getReplace()](#mappinggetreplace)  
+
+* Use [unchecked block](#unchecked-block)
+  ```TVMSolidity
+  if (a > b) {
+     // We definetly know that `a - b` doesn't cause math exception
+     c = a - b;
+  }
+  ```
+
+  ```TVMSolidity
+  Better code:
+  if (a > b) {
+     unchecked {
+        c = a - b;
+     }
+  }
+  ```
 
 [1]: https://test.ton.org/tvm.pdf        "TVM"
 [2]: https://test.ton.org/tblkch.pdf     "TBLKCH"

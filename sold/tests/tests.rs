@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022-2024 EverX. All Rights Reserved.
+ * Copyright (C) 2022-2025 EverX. All Rights Reserved.
  *
  * Licensed under the SOFTWARE EVALUATION License (the "License"); you may not use
  * this file except in compliance with the License.
@@ -18,10 +18,10 @@ type Status = Result<(), Box<dyn std::error::Error>>;
 const BIN_NAME: &str = "sold";
 
 fn remove_all_outputs(name: &str) -> Status {
-    std::fs::remove_file(format!("tests/{}.abi.json", name))?;
-    std::fs::remove_file(format!("tests/{}.code", name))?;
-    std::fs::remove_file(format!("tests/{}.debug.json", name))?;
-    std::fs::remove_file(format!("tests/{}.tvc", name))?;
+    std::fs::remove_file(format!("tests/{name}.abi.json"))?;
+    std::fs::remove_file(format!("tests/{name}.code"))?;
+    std::fs::remove_file(format!("tests/{name}.debug.json"))?;
+    std::fs::remove_file(format!("tests/{name}.tvc"))?;
     Ok(())
 }
 

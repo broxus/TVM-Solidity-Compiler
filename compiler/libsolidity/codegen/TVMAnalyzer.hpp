@@ -29,7 +29,7 @@ class ErrorReporter;
 namespace solidity::frontend
 {
 
-class TVMAnalyzer: private ASTConstVisitor
+class TVMAnalyzer: public ASTConstVisitor
 {
 public:
 	/// @param _errorReporter provides the error logging functionality.
@@ -42,7 +42,6 @@ public:
 private:
 	bool visit(RevertStatement const& _revertStatement) override;
 	bool visit(MemberAccess const& contract) override;
-	bool visit(ContractDefinition const& contract) override;
 	bool visit(FunctionDefinition const& _function) override;
 	bool visit(Return const& _return) override;
 	bool visit(FunctionCall const& _functionCall) override;
@@ -73,6 +72,26 @@ private:
 
 	bool visit(FunctionCall const& _functionCall) override;
 	bool visit(EmitStatement const& _emit) override;
+
+	langutil::ErrorReporter& m_errorReporter;
+	FunctionDefinition const* m_function = nullptr;
+	Expression const* m_functionCallWith128Flag = nullptr;
+};
+
+class TVMAnalyzerPackUnpack: private ASTConstVisitor
+{
+public:
+	/// @param _errorReporter provides the error logging functionality.
+	explicit TVMAnalyzerPackUnpack(langutil::ErrorReporter& _errorReporter);
+
+	/// Performs analysis on the given source unit and all of its sub-nodes.
+	/// @returns true if all checks passed. Note even if all checks passed, errors() can still contain warnings
+	bool analyze(SourceUnit const& _sourceUnit);
+
+private:
+	bool visit(FunctionCall const& _functionCall) override;
+	bool visit(Identifier const& _node) override;
+	bool visit(VariableDeclaration const& _node) override;
 
 	langutil::ErrorReporter& m_errorReporter;
 	FunctionDefinition const* m_function = nullptr;

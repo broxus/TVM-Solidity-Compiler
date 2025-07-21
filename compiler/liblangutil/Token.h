@@ -68,6 +68,7 @@ namespace solidity::langutil
 	/* End of source indicator. */										\
 	T(EOS, "EOS", 0)													\
 																		\
+																		\
 	/* Punctuators (ECMA-262, section 7.7, page 15). */				\
 	T(LParen, "(", 0)                                                   \
 	T(RParen, ")", 0)                                                   \
@@ -80,6 +81,7 @@ namespace solidity::langutil
 	T(Period, ".", 0)                                                   \
 	T(Conditional, "?", 3)                                              \
 	T(DoubleArrow, "=>", 0)                                             \
+	T(Hash, "#", 0)	                                                    \
 	T(RightArrow, "->", 0)                                              \
 	\
 	/* Assignment operators. */										\
@@ -176,6 +178,7 @@ namespace solidity::langutil
 	K(Modifier, "modifier", 0)                                         \
 	K(New, "new", 0)                                                   \
 	K(NoStorage, "nostorage", 0)                                       \
+	K(Unpacked, "unpacked", 0)                                         \
 	K(Optional, "optional", 0)                                         \
 	K(TvmVector, "vector", 0)                                          \
 	K(TvmStack, "stack", 0)                                            \

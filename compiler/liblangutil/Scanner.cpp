@@ -743,6 +743,8 @@ void Scanner::scanToken()
 				token = scanNumber();
 			else if (skipWhitespace())
 				token = Token::Whitespace;
+			else if (m_char == '#')
+				token = selectToken(Token::Hash);
 			else if (isSourcePastEndOfInput())
 				token = Token::EOS;
 			else

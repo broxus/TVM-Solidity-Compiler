@@ -760,6 +760,7 @@ public:
 	TypeResult unaryOperatorResult(Token _operator) const override;
 	TypeResult binaryOperatorResult(Token _operator, Type const* _other) const override;
 	std::string toString(bool) const override { return "TvmCell"; }
+	BoolResult isExplicitlyConvertibleTo(Type const& _convertTo) const override;
 
 	Type const* encodingType() const override { return this; }
 	TypeResult interfaceType(bool) const override { return this; }
@@ -1612,15 +1613,18 @@ public:
 		TVMPubkey, ///< tvm.pubkey()
 		TVMRawConfigParam, ///< tvm.rawConfigParam()
 		TVMReplayProtInterval, ///< tvm.replayProtInterval()
-		TVMReplayProtTime, ///< tvm.replayProtTime()
+		TVMReplayProtTime, ///< tvm.replayProtectionValue()
 		TVMResetStorage, ///< tvm.resetStorage()
 		TVMRawMsg, ///< tvm.sendmsg()
 		TVMSendRawMsg, ///< tvm.sendrawmsg()
 		TVMSetGasLimit, ///< tvm.setGasLimit()
 		TVMSetPubkey, ///< tvm.setPubkey()
-		TVMSetReplayProtTime, ///< tvm.setReplayProtTime()
+		TVMSetReplayProtTime, ///< tvm.setReplayProtectionValue()
 		TVMSetcode, ///< tvm.setcode()
 		TVMDuePayment,
+		TVMLoadLibrary,
+		TVMUnpackData, ///< tvm.unpackData()
+		TVMPackData, ///< tvm.packData()
 
 		TXtimestamp, ///< tx.timestamp
 

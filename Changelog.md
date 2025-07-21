@@ -1,3 +1,24 @@
+### 0.79.0 (2024-07-15)
+
+Bugfixes:
+ * See [issues #174–186](https://github.com/everx-labs/TVM-Solidity-Compiler/issues/).
+ * Public/external functions can take/return mapping that has enum as key types.
+ * Fix a problem with [pragma upgrade oldsol](API.md#pragma-upgrade-oldsol).
+
+Breaking changes:
+ * Deleted pragma to specify default message value: `pragma msgValue`.
+ * Delete default value external [function call](API.md#external-function-calls). You must explicitly define message value.
+ * Deleted pragma `pragma AbiHeader`. Use attribute `ExternalMessage`. See [Receiving external messages](API.md#receiving-external-messages).
+ * Public state variable does not generate getter function. 
+ * Code analyzer: Print error (for `solc --tvm-version ton`) if a message is sent after message with flag 128.
+
+Compiler features:
+ * Added [keyword unpacked](API.md#keyword-unpacked)
+ * Added functions:
+   * [tvm.unpackData()](API.md#tvmunpackdata)
+   * [tvm.packData()](API.md#tvmpackdata)
+ * [Contract-library](API.md#contract-library) and [tvm.loadLibrary()](API.md#tvmloadlibrary)
+
 ### 0.78.0 (2024-05-16)
 
 Supported `ton` features (`solc --tvm-version ton ...`):
@@ -12,7 +33,7 @@ Supported `ton` features (`solc --tvm-version ton ...`):
 Breaking changes:
  * Used another selector. To update old Solidity contracts use [pragma upgrade oldsol](API.md#pragma-upgrade-oldsol) and
 function id 1666 for `onCodeUpgrade` in the new ones.
- * Now `_pubkey` in `*.abi.json` file  is `fixedbytes32`, not `uint256`. 
+ * Now `_pubkey` in `*.abi.json` file  is `fixedbytes32`, not `uint256`.
  * Functions [gasToValue](API.md#gastovalue) and [valueToGas](API.md#valuetogas) changed their signatures:
    * `gasToValue(coins gas, int8 wid)` -> `gasToValue(coins gas, bool isMasterchain)`
    * `valueToGas(coins gas, int8 wid)` -> `valueToGas(coins value, bool isMasterchain)`

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2024 EverX. All Rights Reserved.
+ * Copyright (C) 2019-2025 EverX. All Rights Reserved.
  *
  * Licensed under the  terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License.
@@ -23,7 +23,7 @@ namespace solidity::frontend {
 class TVMExpressionCompiler {
 public:
 	explicit TVMExpressionCompiler(StackPusher &pusher);
-	void compileNewExpr(const Expression* expr);
+	void compileNewExpr(const Expression* expr) const;
 	void acceptExpr(const Expression* expr, bool _isResultNeeded);
 	static int returnParamQty(Expression const& _e);
 
@@ -87,6 +87,8 @@ protected:
 	void visit2(Conditional const& _conditional);
 	bool fold_constants(const Expression *expr);
 
+	static void unrollTuple(Type const* type, TypePointers& result);
+	void assignTuple(Expression const* lhs, const TypePointers &right, int& index);
 	bool tryAssignLValue(Assignment const& _assignment);
 	bool tryAssignTuple(Assignment const& _assignment);
 	void visit2(Assignment const& _assignment);

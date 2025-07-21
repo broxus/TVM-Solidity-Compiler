@@ -11,16 +11,16 @@
  */
 
 use clap::Parser;
-use sold_lib::{build, solidity_version, Args, ERROR_MSG_NO_OUTPUT, VERSION};
+use sold_lib::{run_sold, solidity_version, SoldArgs, ERROR_MSG_NO_OUTPUT, VERSION};
 
 mod libsolc;
 
 fn main() {
     VERSION.set(solidity_version()).unwrap();
 
-    let args = Args::parse();
-    if let Err(e) = build(args) {
-        eprintln!("{}", e);
+    let sold_commands = SoldArgs::parse();
+    if let Err(e) = run_sold(sold_commands) {
+        eprintln!("{e}");
         if e.to_string() != ERROR_MSG_NO_OUTPUT {
             std::process::exit(1);
         }

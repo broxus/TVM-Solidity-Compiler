@@ -77,6 +77,7 @@ protected:
 	void functionId();
 	void abiEncodeBody();
 	bool checkForTvmFunction(MemberAccess const& _node);
+	bool checkForTvmC4(MemberAccess const& _node);
 	void abiFunction();
 	void mathFunction(MemberAccess const& _node);
 	bool checkBaseContractCall(MemberAccess const& _node);
@@ -102,7 +103,7 @@ protected:
 		const std::function<void()>& pushSendrawmsgFlag,
 		const int argQty
 	);
-	void checkStateInit();
+	void checkStateInit() const;
 
 	enum StateInitMembers {
 		SplitDepth,
@@ -119,7 +120,7 @@ protected:
 		ContractType const* ct
 	);
 	bool checkRemoteMethodCall(FunctionCall const &_functionCall);
-	std::string getDefaultMsgValue();
+	static const FunctionDefinition* getRemoteFunctionDefinition(const MemberAccess* memberAccess);
 
 	void pushArgs(bool reversed = false, bool doConvert = true);
 	void pushArgAndConvert(int index, const std::string& name = "");

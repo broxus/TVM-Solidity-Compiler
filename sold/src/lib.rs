@@ -10,6 +10,8 @@
  * See the  GNU General Public License for more details at: https://www.gnu.org/licenses/gpl-3.0.html
  */
 
+use crate::abi_utils::{encode_body, encode_ext_message, init_contract};
+use crate::abi_utils::{decode_abi_param, decode_state_data, encode_value};
 use std::fmt;
 use std::fs::File;
 use std::io::Write;
@@ -17,12 +19,13 @@ use std::os::raw::{c_char, c_void};
 use std::path::Path;
 
 use anyhow::{bail, format_err};
-use clap::{Parser, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Deserialize;
 
 use ever_assembler::{DbgInfo, Engine, Units};
 use ever_block::{Result, Status};
 
+mod abi_utils;
 mod libsolc;
 mod printer;
 
@@ -37,7 +40,7 @@ unsafe extern "C" fn read_callback(
         .to_string_lossy()
         .into_owned();
     if kind != "source" {
-        *o_error = make_error(format!("Unknown kind \"{}\"", kind));
+        *o_error = make_error(format!("Unknown kind \"{kind}\""));
         return;
     }
     let mut success = 0i32;
@@ -68,7 +71,7 @@ fn to_cstr(s: &str) -> Result<std::ffi::CString> {
 }
 
 fn compile(
-    args: &Args,
+    args: &SoldArgs,
     input: &str,
     remappings: Vec<String>,
 ) -> Result<(String, serde_json::Value)> {
@@ -129,7 +132,7 @@ fn compile(
     let tvm_version = match args.tvm_version {
         None => "".to_string(),
         Some(version) => {
-            format!(r#""tvmVersion": "{}","#, version)
+            format!(r#""tvmVersion": "{version}","#)
         }
     };
     let main_contract = args.contract.clone().unwrap_or_default();
@@ -176,7 +179,7 @@ fn remappings_to_json_string(remappings: Vec<String>) -> String {
     let mut out = String::from("[ ");
     let len = remappings.len();
     for (i, r) in remappings.iter().enumerate() {
-        out += &format!("\"{}\"", r);
+        out += &format!("\"{r}\"");
         if i != len - 1 {
             out += ", ";
         }
@@ -226,11 +229,15 @@ fn parse_comp_result(
                 let bytes = strip_ansi_escapes::strip(message);
                 String::from_utf8(bytes)?
             };
-            eprint!("{}", message);
+            eprint!("{message}");
         }
         if severe {
             bail!("Compilation failed")
         }
+    }
+
+    if !res.contains_key("contracts") {
+        return Ok(serde_json::from_str("{}")?);
     }
 
     let all = res
@@ -303,7 +310,45 @@ fn parse_positional_args(args: Vec<String>) -> Result<(String, Vec<String>)> {
     }
 }
 
-pub fn build(args: Args) -> Status {
+pub fn run_sold(args: SoldArgs) -> Status {
+    if let Some(subcommand) = &args.subcommand {
+        return match &subcommand {
+            Commands::Init(init_args) => {
+                init_contract(&init_args.input, &init_args.abi, &init_args.static_values)
+            }
+            Commands::Encode(encode_args) => {
+                match encode_args {
+                    EncodeSubcommands::Cell(encode_args) => {
+                        encode_value(&encode_args.abi, &encode_args.input)
+                    },
+                    EncodeSubcommands::Body(encode_body_args) => {
+                        encode_body(&encode_body_args.abi, &encode_body_args.method, &encode_body_args.input)
+                    },
+                    EncodeSubcommands::Message(encode_message_args) => {
+                        encode_ext_message(
+                                       &encode_message_args.sign,
+                                       &encode_message_args.abi,
+                                       &encode_message_args.time,
+                                       &encode_message_args.lifetime,
+                                       &encode_message_args.address,
+                                       &encode_message_args.method,
+                                       &encode_message_args.params,
+
+                        )
+                    }
+                }
+            }
+            Commands::Decode(decode_subcommand) => match decode_subcommand {
+                DecodeSubcommands::AbiParam(abi_param_args) => {
+                    decode_abi_param(&abi_param_args.abi, &abi_param_args.input)
+                }
+                DecodeSubcommands::StateData(decode_state_data_args) => {
+                    decode_state_data(&decode_state_data_args.abi, &decode_state_data_args.input)
+                }
+            },
+        };
+    }
+
     if !args.include_path.is_empty() && args.base_path.is_none() {
         bail!("--include-path option requires a non-empty base path")
     }
@@ -333,6 +378,10 @@ pub fn build(args: Args) -> Status {
         !(args.abi_json || args.ast_compact_json || args.userdoc || args.devdoc),
     )?;
 
+    if out.as_object().unwrap().is_empty() {
+        return Ok(());
+    }
+
     if args.function_ids {
         println!("{}", serde_json::to_string_pretty(&out["functionIds"])?);
         return Ok(());
@@ -353,7 +402,7 @@ pub fn build(args: Args) -> Status {
         .ok_or_else(|| format_err!("Failed to get file stem"))?
         .to_string();
     let output_prefix = args.output_prefix.unwrap_or(input_file_stem);
-    let output_tvc = format!("{}.tvc", output_prefix);
+    let output_tvc = format!("{output_prefix}.tvc");
 
     if args.userdoc || args.devdoc {
         if args.devdoc {
@@ -392,7 +441,7 @@ pub fn build(args: Args) -> Status {
     }
 
     let abi = &out["abi"];
-    let abi_file_name = format!("{}.abi.json", output_prefix);
+    let abi_file_name = format!("{output_prefix}.abi.json");
     let mut abi_file = File::create(output_path.join(abi_file_name))?;
     printer::print_abi_json_canonically(&mut abi_file, abi)?;
     if args.abi_json {
@@ -403,7 +452,7 @@ pub fn build(args: Args) -> Status {
         .as_str()
         .ok_or_else(|| parse_error!())?
         .to_owned();
-    let assembly_file_name = format!("{}.code", output_prefix);
+    let assembly_file_name = format!("{output_prefix}.code");
     let mut assembly_file = File::create(output_path.join(&assembly_file_name))?;
     assembly_file.write_all(assembly.as_bytes())?;
 
@@ -414,7 +463,7 @@ pub fn build(args: Args) -> Status {
     } else {
         inputs.push((STDLIB.to_string(), String::from("stdlib_sol.tvm")));
     }
-    inputs.push((assembly, format!("{}/{}", output_dir, assembly_file_name)));
+    inputs.push((assembly, format!("{output_dir}/{assembly_file_name}")));
 
     let mut engine = Engine::new("");
     let mut units = Units::new();
@@ -431,14 +480,14 @@ pub fn build(args: Args) -> Status {
     let output_filename = if output_dir == "." {
         output_tvc
     } else {
-        format!("{}/{}", output_dir, output_tvc)
+        format!("{output_dir}/{output_tvc}")
     };
 
     let bytes = ever_block::write_boc(&output)?;
     let mut file = File::create(output_filename)?;
     file.write_all(&bytes)?;
 
-    let mut dbg_file = File::create(format!("{}/{}.debug.json", output_dir, output_prefix))?;
+    let mut dbg_file = File::create(format!("{output_dir}/{output_prefix}.debug.json"))?;
     serde_json::to_writer_pretty(&mut dbg_file, &dbgmap)?;
     writeln!(dbg_file)?;
 
@@ -446,6 +495,8 @@ pub fn build(args: Args) -> Status {
 }
 
 use once_cell::sync::OnceCell;
+use serde_json::json;
+
 pub static VERSION: OnceCell<String> = OnceCell::new();
 
 #[derive(Copy, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
@@ -469,7 +520,7 @@ impl fmt::Display for TvmVersion {
 #[clap(author, about = "sold, the TVM Solidity commandline driver", long_about = None)]
 #[clap(arg_required_else_help = true)]
 #[clap(version = VERSION.get().unwrap().as_str())]
-pub struct Args {
+pub struct SoldArgs {
     /// Source file name or remappings in the form of context:prefix=target
     #[clap(value_parser)]
     pub input: Vec<String>,
@@ -482,7 +533,8 @@ pub struct Args {
     #[clap(long, value_parser, value_names = &["PATH"])]
     pub base_path: Option<String>,
     /// Make an additional source directory available to the default import callback.
-    /// Use this option if you want to import contracts whose location is not fixed in relation
+    /// Use this option if
+    /// you want to import contracts whose location is not fixed in relation
     /// to your main source tree, e.g. third-party libraries installed using a package manager.
     /// Can be used multiple times.
     /// Can only be used if base path has a non-empty value.
@@ -525,4 +577,105 @@ pub struct Args {
     /// Natspec developer documentation of all contracts.
     #[clap(long, value_parser)]
     pub devdoc: bool,
+
+    #[command(subcommand)]
+    subcommand: Option<Commands>,
+}
+
+#[derive(Args, Debug)]
+struct InitArgs {
+    #[clap(value_parser)]
+    pub input: String,
+    /// Init json
+    #[clap(long, value_parser, value_names = &["JSON"])]
+    pub static_values: String,
+    /// Path to the abi file
+    #[clap(long, value_parser, value_names = &["PATH"])]
+    pub abi: String,
+}
+
+#[derive(Args, Debug)]
+struct EncodeCellArgs {
+    /// Abi for value
+    #[clap(long, value_parser, value_names = &["JSON"])]
+    pub abi: String,
+    // The value
+    #[clap(value_parser)]
+    pub input: String,
+}
+
+#[derive(Args, Debug)]
+struct EncodeBodyArgs {
+    /// Abi for value
+    #[clap(long, value_parser, value_names = &["JSON"])]
+    pub abi: String,
+    // The value
+    #[clap(value_parser)]
+    pub method: String,
+    // The value
+    #[clap(value_parser)]
+    pub input: String,
+}
+
+#[derive(Args, Debug)]
+struct EncodeMessageArgs {
+    #[clap(long, value_parser, value_names = &["JSON"])]
+    pub sign: String,
+    #[clap(long, value_parser, value_names = &["JSON"])]
+    pub abi: String,
+    #[clap(long, value_parser, value_names = &["JSON"])]
+    pub time: String,
+    #[clap(long, value_parser, value_names = &["JSON"])]
+    pub lifetime: Option<String>,
+    #[clap(value_parser)]
+    pub address: String,
+    #[clap(value_parser)]
+    pub method: String,
+    #[clap(value_parser)]
+    pub params: String,
+}
+
+#[derive(Args, Debug)]
+struct DecodeAbiParamArgs {
+    /// Abi for value
+    #[clap(long, value_parser, value_names = &["JSON"])]
+    pub abi: String,
+    // The value
+    #[clap(value_parser)]
+    pub input: String,
+}
+
+#[derive(Args, Debug)]
+struct DecodeStateDataArgs {
+    /// Abi for value
+    #[clap(long, value_parser, value_names = &["JSON"])]
+    pub abi: String,
+    // base64 state's data
+    #[clap(value_parser)]
+    pub input: String,
+}
+
+#[derive(Subcommand, Debug)]
+enum EncodeSubcommands {
+    Cell(EncodeCellArgs),
+    Body(EncodeBodyArgs),
+    Message(EncodeMessageArgs),
+}
+
+#[derive(Subcommand, Debug)]
+enum DecodeSubcommands {
+    AbiParam(DecodeAbiParamArgs),
+    StateData(DecodeStateDataArgs),
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Init the data of the stateInit
+    Init(InitArgs),
+
+    #[command(subcommand)]
+    Encode(EncodeSubcommands),
+
+    #[command(subcommand)]
+    Decode(DecodeSubcommands),
 }

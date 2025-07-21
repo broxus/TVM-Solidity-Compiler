@@ -47,6 +47,8 @@ std::string functionName(FunctionDefinition const *_function) {
 
 std::string eventName(EventDefinition const* _event) {
 	ContractDefinition const* contract = _event->annotation().contract;
+	if (contract == nullptr)
+		return _event->name();
 	if (contract->isLibrary())
 		return contract->name() + "#" + _event->name();
 	return _event->name();
@@ -79,17 +81,6 @@ FunctionDefinition const* getSuperFunction(
 	}
 	return prev;
 }
-
-FunctionDefinition const* hasConstructor(ContractDefinition const& contract) {
-	for (ContractDefinition const* c : getContractsChain(&contract)) {
-		for (const auto f : c->definedFunctions()) {
-			if (f->isConstructor())
-				return f;
-		}
-	}
-	return nullptr;
-}
-
 
 const Type *getType(const VariableDeclaration *var) {
 	return var->annotation().type;
@@ -231,18 +222,33 @@ vector<ContractDefinition const *> getContractsChain(ContractDefinition const *c
 	return contracts;
 }
 
-std::vector<VariableDeclaration const *> stateVariables(ContractDefinition const* _contract,
-														bool _onlyNoStorage) {
+std::vector<VariableDeclaration const *> stateVariables(
+	ContractDefinition const* _contract,
+	StateVarType stateVarType
+) {
 	std::vector<VariableDeclaration const *> variableDeclarations;
 	std::vector<ContractDefinition const *> mainChain = getContractsChain(_contract);
-	for (ContractDefinition const * contract: mainChain) {
-		for (VariableDeclaration const *variable: contract->stateVariables()) {
-			if (!variable->isConstant() && (_onlyNoStorage == variable->isNoStorage())
-			) {
-				variableDeclarations.push_back(variable);
+	for (ContractDefinition const * contract: mainChain)
+		for (VariableDeclaration const *variable: contract->stateVariables())
+			if (!variable->isConstant()) {
+				bool isNoStorage = variable->isNoStorage();
+				bool isUnpacked = variable->isUnpacked();
+				bool ok = false;
+				switch (stateVarType) {
+				case StateVarType::Usual:
+					ok = !isNoStorage && !isUnpacked;
+					break;
+				case StateVarType::NoStorage:
+					ok = isNoStorage;
+					break;
+				case StateVarType::Unpacked:
+					ok = isUnpacked;
+					break;
+				}
+				if (ok) {
+					variableDeclarations.push_back(variable);
+				}
 			}
-		}
-	}
 	return variableDeclarations;
 }
 
@@ -291,15 +297,21 @@ bool isEmptyFunction(FunctionDefinition const* f) {
 	return f == nullptr || (f->modifiers().empty() && f->body().statements().empty());
 }
 
-
-
-
 std::vector<VariableDeclaration const*>
 convertArray(std::vector<ASTPointer<VariableDeclaration>> const& arr) {
 	std::vector<VariableDeclaration const*> ret;
 	ret.reserve(arr.size());
 	for (const auto& v : arr)
 		ret.emplace_back(v.get());
+	return ret;
+}
+
+std::vector<Type const*>
+getTypesFromVarDecls(std::vector<VariableDeclaration const*> const& arr) {
+	std::vector<Type const*>  ret;
+	ret.reserve(arr.size());
+	for (const auto& v : arr)
+		ret.emplace_back(v->type());
 	return ret;
 }
 
@@ -389,13 +401,13 @@ void ABITypeSize::init(Type const* type) {
 	} else if (isAddressOrAddressStdOrContractType(type)){
 		maxBits = AddressInfo::maxBitLength();
 		maxRefs = 0;
+	} else if (auto varint = to<VarIntegerType>(type)) {
+		maxBits = varint->maxBitSizeInCell();
+		maxRefs = 0;
 	} else if (isIntegralType(type)) {
 		TypeInfo ti{type};
 		solAssert(ti.isNumeric, "");
 		maxBits = ti.numBits;
-		maxRefs = 0;
-	} else if (auto varint = to<VarIntegerType>(type)) {
-		maxBits = varint->maxBitSizeInCell();
 		maxRefs = 0;
 	} else if (auto arrayType = to<ArrayType>(type)) {
 		if (arrayType->isByteArrayOrString()) {
@@ -443,10 +455,26 @@ void ABITypeSize::init(Type const* type) {
 		maxBits = 1023;
 		maxRefs = 3;
 	} else if (auto userDefType = to<UserDefinedValueType>(type)) {
-		init(&userDefType->underlyingType());
+		return init(&userDefType->underlyingType());
 	} else {
 		solUnimplemented("Undefined type: " + type->toString());
 	}
+
+	fixedSize =
+		to<IntegerType>(type) ||
+		to<QIntegerType>(type) ||
+		to<BoolType>(type) ||
+		to<QBoolType>(type) ||
+		to<EnumType>(type) ||
+		to<TvmCellType>(type) ||
+		to<FunctionType>(type) ||
+		to<FixedBytesType>(type) ||
+		to<FixedPointType>(type);
+
+	fixedRefs = fixedSize || to<AddressType>(type) || to<ContractType>(type);
+
+	solAssert(maxBits != -1);
+	solAssert(maxRefs != -1);
 }
 
 bool isLoc(Pointer<TvmAstNode> const& node) {
@@ -795,6 +823,11 @@ bool isFitUseless(Type const* left, Type const* right, Type const* common, Token
 			(!isLeftSigned || !isRightSigned) &&
 			op == Token::Div
 		);
+}
+
+bool isInRange257(bigint value) {
+	bigint maxUint256 = bigint(1) << 256;
+	return -maxUint256 <= value && value < maxUint256;
 }
 
 // { width: 16, poly: 0x1021, init: 0x0000, refin: false, refout: false,

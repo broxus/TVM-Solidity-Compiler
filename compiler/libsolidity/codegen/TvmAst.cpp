@@ -434,14 +434,16 @@ void TryCatch::accept(TvmAstVisitor& _visitor) {
 }
 
 Function::Function(int take, int ret, std::string name, std::optional<uint32_t> _functionId,
-	Function::FunctionType type, Pointer<CodeBlock> block, const FunctionDefinition *_function) :
+	Function::FunctionType type, Pointer<CodeBlock> block, const FunctionDefinition *_function,
+	bool isPublicInternalMsgFunction) :
 	m_take{take},
 	m_ret{ret},
 	m_name{std::move(name)},
 	m_functionId{_functionId},
 	m_type{type},
 	m_block{std::move(block)},
-	m_function{_function}
+	m_function{_function},
+	m_isPublicInternalMsgFunction{isPublicInternalMsgFunction}
 {
 }
 
@@ -611,8 +613,6 @@ Pointer<StackOpcode> gen(const std::string& cmd) {
 		{"PLDI", {1, 1}},
 		{"PLDILE4", {1, 1}},
 		{"PLDILE8", {1, 1}},
-		{"PLDREF", {1, 1}},
-		{"PLDREFIDX", {1, 1}},
 		{"PLDREFIDX", {1, 1}},
 		{"PLDSLICE", {1, 1}},
 		{"PLDU", {1, 1}},
@@ -817,6 +817,7 @@ Pointer<StackOpcode> gen(const std::string& cmd) {
 		{"STSAME", {3, 1}},
 		{"STUX", {3, 1}},
 		{"STUXR", {3, 1}},
+		{"SCUTLAST", {3, 1}},
 
 		{"DICTDEL", {3, 2}},
 		{"DICTIDEL", {3, 2}},

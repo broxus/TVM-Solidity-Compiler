@@ -44,23 +44,8 @@ Json::Value TVMABI::generateFunctionIdsJson(
 		const std::string name = TVMCompilerContext::getFunctionExternalName(func);
 		func2id[name] = functionID;
 	}
-	if (func2id.count("constructor") == 0 && ctx.hasConstructor())
+	if (func2id.count("constructor") == 0 && ctx.storageLayout().hasConstructor())
 		func2id["constructor"] = ChainDataEncoder::calculateConstructorFunctionID();
-
-	for (VariableDeclaration const* vd : ctx.c4StateVariables()) {
-		if (vd->isPublic()) {
-			std::vector<VariableDeclaration const*> outputs = {vd};
-			uint32_t functionId = ChainDataEncoder::calculateFunctionIDWithReason(
-					vd->name(),
-					{},
-					&outputs,
-					ReasonOfOutboundMessage::RemoteCallInternal,
-					nullopt,
-					false
-			);
-			func2id[vd->name()] = functionId;
-		}
-	}
 
 	Json::Value root(Json::objectValue);
 	for (const auto&[func, functionID] : func2id) {
@@ -77,6 +62,9 @@ TVMABI::generatePrivateFunctionIdsJson(
 	std::vector<ASTPointer<SourceUnit>> const& _sourceUnits,
 	PragmaDirectiveHelper const& pragmaHelper
 ) {
+	if (!contract.canBeDeployed()) {
+		fatal_error(contract.name() + " is not deployable. Can't print private function IDs.");
+	}
 	Json::Value ids{Json::arrayValue};
 	Pointer<Contract> codeContract = TVMContractCompiler::generateContractCode(&contract, _sourceUnits, pragmaHelper);
 	for (Pointer<Function> const& fun : codeContract->functions()) {
@@ -109,9 +97,11 @@ Json::Value TVMABI::generateABIJson(
 		Json::Value header(Json::arrayValue);
 
 		// NOTE: order is important
-		if (pdh.hasPubkey()) header.append("pubkey");
-		if (pdh.hasTime())   header.append("time");
-		if (pdh.hasExpire()) header.append("expire");
+		if (auto msgHeaders = contract->externalMsgHeaders()) {
+			if (msgHeaders->hasPubkey()) header.append("pubkey");
+			if (msgHeaders->hasTime())   header.append("time");
+			if (msgHeaders->hasExpire()) header.append("expire");
+        }
 
 		root["header"] = header;
 	}
@@ -129,15 +119,8 @@ Json::Value TVMABI::generateABIJson(
 			functions.append(toJson(funcName, convertArray(f->parameters()), convertArray(f->returnParameters()), f));
 		}
 
-		if (used.count("constructor") == 0 && ctx.hasConstructor()) {
+		if (used.count("constructor") == 0 && ctx.storageLayout().hasConstructor()) {
 			functions.append(toJson("constructor", {}, {}, nullptr));
-		}
-
-		// add public state variables to functions
-		for (VariableDeclaration const* vd : ctx.c4StateVariables()) {
-			if (vd->isPublic()) {
-				functions.append(toJson(vd->name(), {}, {vd}));
-			}
 		}
 
 		root["functions"] = functions;
@@ -149,22 +132,24 @@ Json::Value TVMABI::generateABIJson(
 		for (const auto &_event : contract->definedInterfaceEvents())
 			events.push_back(_event);
 		for (std::shared_ptr<SourceUnit> const& source: _sourceUnits)
-			for (ASTPointer<ASTNode> const &node: source->nodes())
+			for (ASTPointer<ASTNode> const &node: source->nodes()) {
+				if (auto eventDefinition = dynamic_cast<EventDefinition const *>(node.get()))
+					events.push_back(eventDefinition);
 				if (auto lib = dynamic_cast<ContractDefinition const *>(node.get()))
 					if (lib->isLibrary())
 						for (const auto &event : lib->definedInterfaceEvents())
 							events.push_back(event);
+			}
 
 		Json::Value eventAbi(Json::arrayValue);
 		std::set<std::string> usedEvents;
 		for (const auto &e: events) {
-			const auto &ename = e->name();
-			solAssert(!ename.empty(), "Empty event name!");
 			string name = eventName(e);
-			if (usedEvents.count(name)) {
-				solUnimplemented("Event name duplication!");
+			{
+				const std::string fullName = eventName(e) + " " + e->functionType(true)->externalSignature();
+				solAssert(usedEvents.count(fullName) == 0, "Event is duplicated: " + fullName);
+				usedEvents.insert(fullName);
 			}
-			usedEvents.insert(name);
 			Json::Value cur;
 			cur["name"] = name;
 			cur["inputs"] = encodeParams(convertArray(e->parameters()));
@@ -176,11 +161,15 @@ Json::Value TVMABI::generateABIJson(
 	// fields
 	{
 		Json::Value fields(Json::arrayValue);
-		std::vector<std::pair<std::string, std::string>> offset{{"_pubkey", "fixedbytes32"}};
-		if (ctx.storeTimestampInC4())
+		std::vector<std::pair<std::string, std::string>> offset;
+
+		if (ctx.storageLayout().storePubkeyInC4())
+			offset.emplace_back("_pubkey", "fixedbytes32");
+
+		if (ctx.storageLayout().storeTimestampInC4())
 			offset.emplace_back("_timestamp", "uint64");
 
-		if (ctx.hasConstructor())
+		if (ctx.storageLayout().hasConstructor())
 			offset.emplace_back("_constructorFlag", "bool");
 
 		for (const auto& [name, type] : offset) {
@@ -191,7 +180,7 @@ Json::Value TVMABI::generateABIJson(
 			fields.append(field);
 		}
 
-		std::vector<VariableDeclaration const *> stateVars = ctx.c4StateVariables();
+		std::vector<VariableDeclaration const *> stateVars = ctx.storageLayout().usualAndUnpackedStateVariables();
 		std::set<std::string> usedNames;
 		std::vector<std::tuple<std::string, Type const*, bool>> namesTypes;
 		for (VariableDeclaration const * var : stateVars | boost::adaptors::reversed) {
@@ -567,9 +556,23 @@ Json::Value TVMABI::setupTupleComponents(const TupleType* type) {
 	return components;
 }
 
-DecodePositionAbiV2::DecodePositionAbiV2(int _bitOffset, int _refOffset, const std::vector<Type const *>& _types) {
+void AbiPosition::unroll(std::vector<Type const*>& types, Type const* type) {
+	if (type->category() == Type::Category::Struct) {
+		auto members = to<StructType>(type)->structDefinition().members();
+		for (const auto &m : members) {
+			unroll(types, m->type());
+		}
+	} else if (type->category() == Type::Category::UserDefinedValueType) {
+		auto userDefType = to<UserDefinedValueType>(type);
+		unroll(types, &userDefType->underlyingType());
+	} else {
+		types.emplace_back(type);
+	}
+}
+
+AbiV2Position::AbiV2Position(int _bitOffset, int _refOffset, const std::vector<Type const *>& _types) {
 	for (const auto & type : _types) {
-		initTypes(type);
+		unroll(m_types, type);
 	}
 
 	int bits = _bitOffset;
@@ -605,30 +608,25 @@ DecodePositionAbiV2::DecodePositionAbiV2(int _bitOffset, int _refOffset, const s
 	}
 }
 
-void DecodePositionAbiV2::initTypes(Type const* type) {
-	if (type->category() == Type::Category::Struct) {
-		auto members = to<StructType>(type)->structDefinition().members();
-		for (const auto &m : members) {
-			initTypes(m->type());
-		}
-	} else if (type->category() == Type::Category::UserDefinedValueType) {
-		auto userDefType = to<UserDefinedValueType>(type);
-		initTypes(&userDefType->underlyingType());
-	} else {
-		m_types.push_back(type);
-	}
-}
-
-bool DecodePositionAbiV2::loadNextCell(Type const *type) {
+bool AbiV2Position::skipType(Type const *type) {
 	int i = m_curTypeIndex;
 	++m_curTypeIndex;
-	solAssert(type->toString() == m_types[i]->toString(), "");
-	ABITypeSize size{type};
+	solAssert(type->toString() == m_types.at(i)->toString(), "");
 	return m_doLoadNextCell.at(i);
 }
 
-int DecodePositionAbiV2::countOfCreatedBuilders() const {
+int AbiV2Position::countOfCreatedBuilders() const {
 	return m_countOfCreatedBuilders;
+}
+
+void AbiV2Position::skipTypes(std::vector<Type const *> const & _types) {
+	for (auto const& type : _types) {
+		std::vector<Type const*> curTypes;
+		unroll(curTypes, type);
+		for (const auto & curType : curTypes) {
+			skipType(curType);
+		}
+	}
 }
 
 ChainDataDecoder::ChainDataDecoder(StackPusher *pusher) :
@@ -636,18 +634,18 @@ ChainDataDecoder::ChainDataDecoder(StackPusher *pusher) :
 
 }
 
-int ChainDataDecoder::maxBits(bool isResponsible) {
+int ChainDataDecoder::offsetExternalFunction(bool isResponsible) const {
 	// external inbound message
 	int maxUsed = TvmConst::Abi::MaxOptionalSignLength +
-				  (pusher->ctx().pragmaHelper().hasPubkey()? 1 + 256 : 0) +
-				  (pusher->ctx().pragmaHelper().hasTime()? 64 : 0) +
-				  (pusher->ctx().pragmaHelper().hasExpire()? 32 : 0) +
+				  (pusher->ctx().getContract()->externalMsgHeaders()->hasPubkey()? 1 + 256 : 0) +
+				  (pusher->ctx().getContract()->externalMsgHeaders()->hasTime()? 64 : 0) +
+				  (pusher->ctx().getContract()->externalMsgHeaders()->hasExpire()? 32 : 0) +
 				  32 + // functionID
 				  (isResponsible ? 32 : 0); // callback function
 	return maxUsed;
 }
 
-int ChainDataDecoder::minBits(bool isResponsible) {
+int ChainDataDecoder::offsetInternalFunction(bool isResponsible) {
 	return 32 + (isResponsible ? 32 : 0);
 }
 
@@ -655,26 +653,26 @@ void ChainDataDecoder::decodePublicFunctionParameters(
 	const std::vector<Type const*>& types,
 	bool isResponsible,
 	bool isInternal
-) {
+) const {
 	if (isInternal) {
-		DecodePositionAbiV2 position{minBits(isResponsible), 0, types};
+		AbiV2Position position{offsetInternalFunction(isResponsible), 0, types};
 		decodeParameters(types, position);
 	} else {
-		DecodePositionAbiV2 position{maxBits(isResponsible), 0, types};
+		AbiV2Position position{offsetExternalFunction(isResponsible), 0, types};
 		decodeParameters(types, position);
 	}
 	*pusher << "ENDS";
 }
 
-ChainDataDecoder::DecodeType ChainDataDecoder::getDecodeType(FunctionDefinition const* f) {
-	if (f->isExternalMsg())
+ChainDataDecoder::DecodeType ChainDataDecoder::getDecodeType(FunctionDefinition const* function) {
+	if (function->isExternalMsg() && function->isInternalMsg())
+		return DecodeType::BOTH;
+	if (function->isExternalMsg())
 		return DecodeType::ONLY_EXT_MSG;
-	if (f->isInternalMsg())
-		return DecodeType::ONLY_INT_MSG;
-	return DecodeType::BOTH;
+	return DecodeType::ONLY_INT_MSG;
 }
 
-void ChainDataDecoder::decodeFunctionParameters(const std::vector<Type const*>& types, bool isResponsible, DecodeType decodeType) {
+void ChainDataDecoder::decodeFunctionParameters(const std::vector<Type const*>& types, bool isResponsible, DecodeType decodeType) const {
 	switch (decodeType) {
 	case DecodeType::ONLY_EXT_MSG:
 		decodePublicFunctionParameters(types, isResponsible, false);
@@ -701,17 +699,18 @@ void ChainDataDecoder::decodeFunctionParameters(const std::vector<Type const*>& 
 	}
 }
 
-void ChainDataDecoder::decodeData(int offset, int usedRefs, const std::vector<Type const*>& types) {
-	DecodePositionAbiV2 position{offset, usedRefs, types};
+void ChainDataDecoder::decodeData(int offset, int usedRefs, const std::vector<Type const*>& types, bool withENDS) const {
+	AbiV2Position position{offset, usedRefs, types};
 	decodeParameters(types, position);
-	*pusher << "ENDS";
+	if (!withENDS)
+		*pusher << "ENDS";
 }
 
 void ChainDataDecoder::decodeParameters(
 	const std::vector<Type const*>& types,
-	DecodePosition& position
-) {
-	// slice are on stack
+	AbiPosition& position
+) const {
+	// slice is on stack
 	solAssert(pusher->stackSize() >= 1, "");
 
 	for (const auto & type : types) {
@@ -726,8 +725,8 @@ void ChainDataDecoder::decodeParameters(
 
 void ChainDataDecoder::decodeParametersQ(
 	const std::vector<Type const*>& types,
-	DecodePosition& position
-) {
+	AbiPosition& position
+) const {
 	pusher->startContinuation();
 	pusher->startOpaque();
 	int ind = 0;
@@ -751,24 +750,21 @@ void ChainDataDecoder::decodeParametersQ(
 	pusher->pushContAndCallX(1, 2, false);
 }
 
-void ChainDataDecoder::loadNextSlice() {
+void ChainDataDecoder::loadNextSlice() const{
 	*pusher << "LDREF";
 	*pusher << "ENDS"; // only ENDS
 	*pusher << "CTOS";
 }
 
-void ChainDataDecoder::loadNextSliceIfNeed(bool doLoadNextSlice) {
-	if (doLoadNextSlice) {
-		loadNextSlice();
-	}
-}
-
-void ChainDataDecoder::decodeParameter(Type const* type, DecodePosition* position) {
+void ChainDataDecoder::decodeParameter(Type const* type, AbiPosition* position,
+	bool isFirstCall, bool loadForFirstCallIfNeeded
+) const {
 	const Type::Category category = type->category();
 	if (auto structType = to<StructType>(type)) {
 		ast_vec<VariableDeclaration> const& members = structType->structDefinition().members();
 		for (const ASTPointer<VariableDeclaration> &m : members) {
-			decodeParameter(m->type(), position);
+			decodeParameter(m->type(), position, isFirstCall, loadForFirstCallIfNeeded);
+			isFirstCall = false;
 		}
 		// members... slice
 		const int memberQty = members.size();
@@ -778,7 +774,9 @@ void ChainDataDecoder::decodeParameter(Type const* type, DecodePosition* positio
 	} else if (isIntegralType(type)) {
 		TypeInfo ti{type};
 		solAssert(ti.isNumeric, "");
-		loadNextSliceIfNeed(position->loadNextCell(type));
+		bool doLoadNextCell = position->skipType(type);
+		if (doLoadNextCell && ((isFirstCall && loadForFirstCallIfNeeded) || !isFirstCall))
+			loadNextSlice();
 		pusher->load(type, false);
 		if (auto enumType = to<EnumType>(type)) {
 			pusher->pushS(1);
@@ -797,16 +795,18 @@ void ChainDataDecoder::decodeParameter(Type const* type, DecodePosition* positio
 		category == Type::Category::Contract ||
 		category == Type::Category::AddressStd
 	) {
-		loadNextSliceIfNeed(position->loadNextCell(type));
+		bool doLoadNextCell = position->skipType(type);
+		if (doLoadNextCell && ((isFirstCall && loadForFirstCallIfNeeded) || !isFirstCall))
+			loadNextSlice();
 		pusher->load(type, false);
 	} else if (auto userDefType = to<UserDefinedValueType>(type)) {
-		decodeParameter(&userDefType->underlyingType(), position);
+		decodeParameter(&userDefType->underlyingType(), position, isFirstCall, loadForFirstCallIfNeeded);
 	} else {
 		solUnimplemented("Unsupported parameter type for decoding: " + type->toString());
 	}
 }
 
-void ChainDataDecoder::decodeParameterQ(Type const* type, DecodePosition* position, int ind) {
+void ChainDataDecoder::decodeParameterQ(Type const* type, AbiPosition* position, int ind) const {
 	const Type::Category category = type->category();
 	if (/*auto structType =*/ to<StructType>(type)) {
 		solUnimplemented("TODO");
@@ -817,7 +817,9 @@ void ChainDataDecoder::decodeParameterQ(Type const* type, DecodePosition* positi
 		to<MappingType>(type) ||
 		(category == Type::Category::Address || category == Type::Category::AddressStd || category == Type::Category::Contract)
 	) {
-		loadNextSliceIfNeed(position->loadNextCell(type));
+		bool doLoadNextCell = position->skipType(type);
+		if (doLoadNextCell)
+			loadNextSlice();
 		pusher->loadQ(type);
 	} else {
 		solUnimplemented("Unsupported parameter type for decoding: " + type->toString());
@@ -842,8 +844,7 @@ void ChainDataDecoder::decodeParameterQ(Type const* type, DecodePosition* positi
 	}
 }
 
-void ChainDataEncoder::createDefaultConstructorMsgBodyAndAppendToBuilder(const int bitSizeBuilder)
-{
+void ChainDataEncoder::createDefaultConstructorMsgBodyAndAppendToBuilder(const int bitSizeBuilder) const {
 	uint32_t funcID = calculateConstructorFunctionID();
 	std::stringstream ss;
 	ss << "x" << std::hex << std::setfill('0') << std::setw(8) << funcID;
@@ -859,8 +860,7 @@ void ChainDataEncoder::createDefaultConstructorMsgBodyAndAppendToBuilder(const i
 	}
 }
 
-void ChainDataEncoder::createDefaultConstructorMessage2()
-{
+void ChainDataEncoder::createDefaultConstructorMessage2() const {
 	uint32_t funcID = calculateConstructorFunctionID();
 	std::stringstream ss;
 	ss << "x" << std::hex << std::setfill('0') << std::setw(8) << funcID;
@@ -1020,20 +1020,20 @@ void ChainDataEncoder::createMsgBodyAndAppendToBuilder(
 		const std::optional<uint32_t>& callbackFunctionId,
 		const int bitSizeBuilder,
 		const bool reversedArgs
-) {
+) const {
 
 	const int saveStackSize = pusher->stackSize();
 
 	std::vector<Type const*> types = getParams(params).first;
 	const int callbackLength = callbackFunctionId.has_value() ? 32 : 0;
-	std::unique_ptr<DecodePositionAbiV2> position = std::make_unique<DecodePositionAbiV2>(bitSizeBuilder + 32 + callbackLength, 0, types);
+	std::unique_ptr<AbiV2Position> position = std::make_unique<AbiV2Position>(bitSizeBuilder + 32 + callbackLength, 0, types);
 	const bool doAppend = position->countOfCreatedBuilders() == 0;
 	doAppend ? pusher->stzeroes(1) : pusher->stones(1);
 	if (params.size() >= 2 && !reversedArgs) {
 		pusher->reverse(params.size(), 1);
 	}
 	if (!doAppend) {
-		position = std::make_unique<DecodePositionAbiV2>(32 + callbackLength, 0, types);
+		position = std::make_unique<AbiV2Position>(32 + callbackLength, 0, types);
 		pusher->blockSwap(params.size(), 1); // msgBuilder, arg[n-1], ..., arg[1], arg[0]
 		*pusher << "NEWC"; // msgBuilder, arg[n-1], ..., arg[1], arg[0], builder
 	}
@@ -1047,20 +1047,18 @@ void ChainDataEncoder::createMsgBodyAndAppendToBuilder(
 	}
 
 	if (!pusher->hasLock())
-		solAssert(saveStackSize == int(pusher->stackSize() + params.size()), "");
+	solAssert(saveStackSize == static_cast<int>(pusher->stackSize() + params.size()), "");
 
 }
 
 // arg[n-1], ..., arg[1], arg[0], msgBuilder
 void ChainDataEncoder::createMsgBody(
-		const std::vector<VariableDeclaration const*> &params,
-		const std::variant<uint32_t, std::function<void()>>& functionId,
-		const std::optional<uint32_t>& callbackFunctionId,
-		DecodePositionAbiV2 &position
-) {
-	std::vector<Type const*> types;
-	std::vector<ASTNode const*> nodes;
-	std::tie(types, nodes) = getParams(params);
+	const std::vector<VariableDeclaration const*> &params,
+	const std::variant<uint32_t, std::function<void()>>& functionId,
+	const std::optional<uint32_t>& callbackFunctionId,
+	AbiV2Position &position
+) const {
+	auto [types, nodes] = getParams(params);
 
 	if (functionId.index() == 0) {
 		std::stringstream ss;
@@ -1077,19 +1075,21 @@ void ChainDataEncoder::createMsgBody(
 		*pusher << "STSLICECONST " + ss.str();
 	}
 
-	encodeParameters(types, position);
+	encodeParameters(types, position, false);
 }
 
 // arg[n-1], ..., arg[1], arg[0], builder
 // Target: create and append to `builder` the args
 void ChainDataEncoder::encodeParameters(
 	const std::vector<Type const *> & _types,
-	DecodePositionAbiV2 &position
-) {
+	AbiV2Position &position,
+	bool hasUnpackedStateVars
+) const {
 	// builder must be located on the top of stack
+	int builderQty = 1;
 	std::vector<Type const *> typesOnStack{_types.rbegin(), _types.rend()};
 	while (!typesOnStack.empty()) {
-		const int argQty = typesOnStack.size();
+		const int argQty = typesOnStack.size() + (hasUnpackedStateVars ? 1 : 0);
 		Type const* type = typesOnStack.back();
 		typesOnStack.pop_back();
 		if (auto structType = to<StructType>(type)) {
@@ -1104,17 +1104,22 @@ void ChainDataEncoder::encodeParameters(
 		} else if (auto userDefType = to<UserDefinedValueType>(type)) {
 			typesOnStack.push_back(&userDefType->underlyingType());
 		} else {
-			if (position.loadNextCell(type)) {
+			bool doLoadNextCell = position.skipType(type);
+			if (doLoadNextCell) {
 				// arg[n-1], ..., arg[1], arg[0], builder
 				pusher->blockSwap(argQty, 1);
 				*pusher << "NEWC";
+				++builderQty;
 			}
 			pusher->store(type);
 		}
 	}
-	for (int idx = 0; idx < position.countOfCreatedBuilders(); idx++) {
+
+	if (hasUnpackedStateVars)
+		*pusher << "STSLICE";
+
+	for (int i = 0; i + 1 < builderQty; ++i)
 		*pusher << "STBREFR";
-	}
 }
 
 std::string ChainDataEncoder::toStringForCalcFuncID(Type const * type) {
@@ -1148,4 +1153,386 @@ std::string ChainDataEncoder::toStringForCalcFuncID(Type const * type) {
 	solAssert(!obj.isMember("components"), "");
 	std::string typeName = obj["type"].asString();
 	return typeName;
+}
+
+UnpackedCoderDecoder::UnpackedCoderDecoder(
+	StackPusher& pusher,
+	int _offset,
+	int _usedRefs,
+	int _varOffset,
+	std::vector<Type const*> const& _varTypes,
+	std::vector<bool> const& _varNeeded
+) :
+	pusher{pusher},
+	offset{_offset},
+	usedRefs{_usedRefs},
+	varOffset{_varOffset},
+	varTypes{_varTypes},
+	varNeeded{_varNeeded}
+{
+	std::unique_ptr<AbiV2Position> position = createPosition();
+
+	neededVars = 0;
+	types.reserve(position->size());
+	varIndex = std::vector<int>(position->size(), -1);
+	to = std::vector<int>(position->size(), -1);
+	isNeededType = std::vector<bool> (position->size(), false);
+	startIndexType = -1;
+	lastIndexType = -1;
+	for (int i = 0; i < static_cast<int>(varTypes.size()); ++i) {
+		int startSize = types.size();
+		if (i == varOffset) {
+			startIndexType = startSize;
+		}
+		AbiPosition::unroll(types, varTypes.at(i));
+		if (varNeeded.at(i)) {
+			++neededVars;
+			for (int j = startSize; j < static_cast<int>(types.size()); ++j) {
+				lastIndexType = j;
+				isNeededType[j] = true;
+				varIndex[j] = i;
+			}
+		}
+	}
+
+	for (int i = lastIndexType; i >= 0; --i) {
+		if (i == lastIndexType ||
+			position->getDoLoadNextCell(i + 1) ||
+			isNeededType[i] != isNeededType.at(i + 1)
+		) {
+			to[i] = i + 1;
+		} else {
+			// The next type is not in the new cell
+			to[i] = to[i + 1];
+		}
+
+	}
+}
+
+std::unique_ptr<AbiV2Position> UnpackedCoderDecoder::createPosition() const {
+	auto position = std::make_unique<AbiV2Position>(offset, usedRefs, varTypes);
+	position->skipTypes(std::vector<Type const *>{varTypes.begin(), varTypes.begin() + varOffset});
+	return position;
+}
+
+void UnpackedCoderDecoder::unpackedData() {
+	// slice is on stack
+	const int startStackSize = pusher.stackSize();
+	solAssert(startStackSize >= 1, "");
+
+	std::unique_ptr<AbiV2Position> position = createPosition();
+
+	if (position->getDoLoadNextCell(startIndexType)) {
+		pusher << "LDREFRTOS";
+		pusher.dropUnder(1, 1);
+	}
+	for (int i = startIndexType; i <= lastIndexType; ) {
+		if (int varInd = varIndex.at(i);
+			varInd != -1 && varNeeded.at(varInd)
+		) {
+			int nextI = i + 1;
+			while (nextI <= lastIndexType && varIndex.at(nextI) == varInd) {
+				++nextI;
+			}
+
+			ChainDataDecoder decoder{&pusher};
+			decoder.decodeParameter(varTypes.at(varInd), position.get(), true, false);
+
+			if (nextI <= lastIndexType && position->getDoLoadNextCell(nextI)) {
+				pusher << "LDREFRTOS";
+				pusher.dropUnder(1, 1);
+			}
+
+			i = nextI;
+		} else {
+			skipTypesAndLoadCellIfNeeded(i, position);
+			i = to.at(i);
+		}
+	}
+	pusher.drop();
+
+	pusher.getStack().ensureSize(startStackSize - 1 + neededVars);
+}
+
+void UnpackedCoderDecoder::packData(std::map<int, std::function<void()>> const& varIndexToPush) {
+	// unpack data
+	const int startStackSize = pusher.stackSize();
+	std::unique_ptr<AbiV2Position> position = createPosition();
+	std::vector<Type const*> typesOnStack;
+
+	if (position->getDoLoadNextCell(startIndexType)) {
+		pusher << "LDREFRTOS";
+		pusher.dropUnder(1, 1);
+	}
+	for (int i = startIndexType; i <= lastIndexType; ) {
+		if (const int varInd = varIndex.at(i);
+			varInd != -1 && varNeeded.at(varInd)
+		) {
+			int nextI = i + 1;
+			while (nextI <= lastIndexType && isNeededType.at(nextI))
+				++nextI;
+
+			if (i + 1 == nextI && (nextI > lastIndexType || !position->getDoLoadNextCell(nextI))) {
+				pusher.load(types.at(i), false);
+				int curVarInd = varIndex.at(i);
+				varIndexToPush.at(curVarInd)();
+				pusher.popS(2);
+				typesOnStack.emplace_back(varTypes.at(curVarInd));
+			} else {
+				for (int j = i; j < nextI; ) {
+					int toJ = to.at(j);
+					skipTypesAndLoadCellIfNeeded(j, position);
+					j = toJ;
+				}
+
+				int varQty = 0;
+				for (int j = i; j < nextI; ++j) {
+					if (j == i || varIndex.at(j - 1) != varIndex.at(j)) {
+						int curVarInd = varIndex.at(j);
+						varIndexToPush.at(curVarInd)();
+						typesOnStack.emplace_back(varTypes.at(curVarInd));
+						++varQty;
+					}
+				}
+				pusher.blockSwap(1, varQty);
+			}
+			i = nextI;
+		} else {
+			int nextI = to.at(i);
+			if (position->getDoLoadNextCell(nextI)) {
+				auto refs = getFixedRef(i, nextI);
+				if (refs.has_value() && refs.value() == 0) {
+					pusher << "LDREFRTOS";
+				} else {
+					pusher.pushS(0);
+					pusher << "SBITREFS";
+					pusher << "DEC";
+					pusher << "SPLIT";
+					pusher << "LDREFRTOS";
+					pusher.dropUnder(1, 1);
+				}
+				typesOnStack.emplace_back(TypeProvider::tvmslice());
+				for (int j = i; j < nextI; ++j)
+					position->skipTypes({types.at(j)});
+			} else {
+				for (int j = i; j < nextI; ) {
+					ABITypeSize typeSize{types.at(j)};
+					if (typeSize.fixedSize) {
+						int k = j;
+						while (k < nextI && ABITypeSize{types.at(k)}.fixedSize) {
+							position->skipTypes({types.at(k)});
+							++k;
+						}
+						const auto size = isFixedSize(j, k);
+						pusher.pushInt(size->bits);
+						pusher.pushInt(size->refs);
+						pusher << "SPLIT";
+						typesOnStack.emplace_back(TypeProvider::tvmslice());
+						j = k;
+					} else {
+						position->skipTypes({types.at(j)});
+						pusher.load(types[j], false);
+						typesOnStack.emplace_back(types.at(j));
+						++j;
+					}
+				}
+			}
+			i = nextI;
+		}
+	}
+
+	{
+		int stackDelta = pusher.stackSize() - startStackSize;
+		pusher.reverse(stackDelta + 1, 0);
+		std::reverse(typesOnStack.begin(), typesOnStack.end());
+	}
+
+	auto popTopType = [&](Type const* type) {
+		solAssert(!typesOnStack.empty());
+		solAssert(*type == *typesOnStack.back());
+		typesOnStack.pop_back();
+	};
+
+	// pack data
+	pusher << "NEWC";
+	int builderQty = 1;
+
+	for (int i = startIndexType; i <= lastIndexType; ) {
+		int varInd = varIndex.at(i);
+
+		if (varInd != -1 && varNeeded.at(varInd)) {
+			int nextI = i + 1;
+			while (nextI <= lastIndexType && varIndex.at(nextI) == varInd)
+				++nextI;
+
+			for (int j = i; j < nextI; ++j) {
+				if (position->getDoLoadNextCell(j)) {
+					// b0 b1 b2 ... data... builder
+					int stackDelta = pusher.stackSize() - startStackSize - builderQty + 1;
+					pusher.blockSwap(stackDelta, 1);
+					pusher << "NEWC";
+					++builderQty;
+				}
+
+				if (*types.at(j) != *typesOnStack.back()) {
+					auto currentType = typesOnStack.back();
+					typesOnStack.pop_back();
+
+					auto structType = ::to<StructType>(currentType);
+					solAssert(structType);
+					std::vector<ASTPointer<VariableDeclaration>> const& members = structType->structDefinition().members();
+
+					// struct builder
+					pusher.exchange(1); // builder struct
+					pusher.untuple(members.size()); // builder, m0, m1, ..., m[len(n)-1]
+					pusher.reverse(members.size() + 1, 0); // m[len(n)-1], ..., m1, m0, builder
+
+					for (const ASTPointer<VariableDeclaration>& m : members | boost::adaptors::reversed)
+						typesOnStack.push_back(m->type());
+				}
+
+				pusher.store(types.at(j));
+				popTopType(types.at(j));
+			}
+
+			i = nextI;
+		} else {
+			int nextI = to.at(i);
+
+			if (position->getDoLoadNextCell(i) && position->getDoLoadNextCell(nextI)) {
+				// b0 b1 b2 ... data... builder
+				int stackDelta = pusher.stackSize() - startStackSize - builderQty + 1;
+				pusher.blockSwap(stackDelta, 1);
+				pusher << "NEWC";
+				++builderQty;
+
+				pusher << "STSLICE";
+				popTopType(TypeProvider::tvmslice());
+			} else if (!position->getDoLoadNextCell(i) && position->getDoLoadNextCell(nextI)) {
+				pusher << "STSLICE";
+				popTopType(TypeProvider::tvmslice());
+			} else {
+				if (position->getDoLoadNextCell(i)) {
+					// b0 b1 b2 ... data... builder
+					int stackDelta = pusher.stackSize() - startStackSize - builderQty + 1;
+					pusher.blockSwap(stackDelta, 1);
+					pusher << "NEWC";
+					++builderQty;
+				}
+
+				for (int j = i; j < nextI; ) {
+					ABITypeSize typeSize{types.at(j)};
+					if (typeSize.fixedSize) {
+						int k = j;
+						while (k < nextI && ABITypeSize{types.at(k)}.fixedSize) {
+							++k;
+						}
+						pusher << "STSLICE";
+						popTopType(TypeProvider::tvmslice());
+						j = k;
+					} else {
+						pusher.store(types[j]);
+						popTopType(types.at(j));
+						++j;
+					}
+				}
+			}
+
+			i = nextI;
+		}
+	}
+	pusher << "STSLICE"; // store tail
+
+	for (int i = 0; i + 1 < builderQty; ++i) {
+		pusher << "STBREFR";
+	}
+
+	pusher << "ENDC";
+	pusher << "CTOS";
+
+	solAssert(startStackSize == pusher.stackSize(), "startStackSize == pusher.stackSize()");
+}
+
+std::optional<UnpackedCoderDecoder::TypeSize> UnpackedCoderDecoder::isFixedSize(int i, int j) const {
+	solAssert(i < j);
+	int bits = 0;
+	int refs = 0;
+	for (int k = i; k < j; ++k) {
+		ABITypeSize typeSize{types.at(k)};
+		if (!typeSize.fixedSize)
+			return {};
+		bits += typeSize.maxBits;
+		refs += typeSize.maxRefs;
+	}
+	return TypeSize{bits, refs};
+}
+
+std::optional<int> UnpackedCoderDecoder::getFixedRef(int i, int j) const {
+	solAssert(i < j);
+	int refs = 0;
+	for (int k = i; k < j; ++k) {
+		ABITypeSize typeSize{types.at(k)};
+		if (!typeSize.fixedRefs)
+			return {};
+		refs += typeSize.maxRefs;
+	}
+	return refs;
+}
+
+void UnpackedCoderDecoder::skipTypes(int beginIndex, int endIndex, std::unique_ptr<AbiV2Position>& position) const {
+	int dropQty = 0;
+	for (int i = beginIndex; i < endIndex; ) {
+		ABITypeSize typeSize{types.at(i)};
+		if (typeSize.fixedSize) {
+			int j = i;
+			while (j < endIndex && ABITypeSize{types.at(j)}.fixedSize) {
+				position->skipTypes({types.at(j)});
+				++j;
+			}
+			const auto size = isFixedSize(i, j);
+			pusher.pushInt(size->bits);
+			pusher.pushInt(size->refs);
+			pusher << "SSKIPFIRST";
+			i = j;
+		} else {
+			position->skipTypes({types.at(i)});
+			pusher.load(types[i], false);
+			++dropQty;
+			++i;
+		}
+	}
+	pusher.dropUnder(dropQty, 1);
+}
+
+void UnpackedCoderDecoder::skipTypesAndLoadCellIfNeeded(int index, std::unique_ptr<AbiV2Position>& position) const {
+	const int nextIndex = to.at(index);
+	if (nextIndex <= lastIndexType && position->getDoLoadNextCell(nextIndex)) {
+		const auto refs = getFixedRef(index, nextIndex);
+		if (refs.has_value()) {
+			pusher << "PLDREFIDX " + toString(refs.value());
+			pusher << "CTOS";
+			for (int k = index; k < nextIndex; ++k)
+				position->skipTypes({types.at(k)});
+		} else if (index + 1 == nextIndex) {
+			skipTypes(index, nextIndex, position);
+			pusher << "PLDREFIDX 0";
+			pusher << "CTOS";
+		} else {
+			// pusher.pushS(0);
+			// pusher << "SREFS";
+			// pusher << "DEC";
+			// pusher << "PLDREFVAR";
+			// pusher << "CTOS";
+
+			pusher.pushInt(0);
+			pusher.pushInt(1);
+			pusher << "SCUTLAST";
+			pusher << "LDREFRTOS";
+			pusher.dropUnder(1, 1);
+			for (int k = index; k < nextIndex; ++k)
+				position->skipTypes({types.at(k)});
+		}
+	} else {
+		skipTypes(index, nextIndex, position);
+	}
 }
