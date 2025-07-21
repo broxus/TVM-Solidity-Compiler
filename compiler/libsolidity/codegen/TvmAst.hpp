@@ -465,10 +465,10 @@ public:
 		MainInternal,
 		MainExternal,
 		OnCodeUpgrade,
-		OnTickTock
+		OnTickTock,
 	};
 	Function(int take, int ret, std::string name, std::optional<uint32_t> functionId, FunctionType type, Pointer<CodeBlock> block,
-			 FunctionDefinition const* _function = {});
+			 FunctionDefinition const* _function = {}, bool isPublicInternalMsgFunction = {});
 	void accept(TvmAstVisitor& _visitor) override;
 	bool operator==(TvmAstNode const&) const override { return false; } // TODO
 	int take() const { return m_take; }
@@ -478,6 +478,7 @@ public:
 	FunctionDefinition const* functionDefinition() const { return m_function; }
 	FunctionType type() const { return m_type; }
 	Pointer<CodeBlock> const& block() const { return m_block; }
+	bool isPublicInternalMsgFunction() const { return m_isPublicInternalMsgFunction; }
 private:
 	int m_take{};
 	int m_ret{};
@@ -486,12 +487,19 @@ private:
 	FunctionType m_type{};
 	Pointer<CodeBlock> m_block;
 	FunctionDefinition const* m_function{};
+	bool m_isPublicInternalMsgFunction{};
 };
 
 class Contract : public TvmAstNode {
 public:
+	enum class ContractType {
+		Contract,
+		ContractLibrary,
+		StdLibrary
+	};
+
 	Contract(
-		bool _isLib,
+		ContractType _contractType,
 		bool _saveAllFunction,
 		bool upgradeOldSolidity,
 		std::string _version,
@@ -499,7 +507,7 @@ public:
 		std::map<uint32_t, std::string> _privateFunctions,
 		std::map<uint32_t, std::string> _getters
 	) :
-		m_isLib{_isLib},
+		m_contractType{_contractType},
 		m_saveAllFunction{_saveAllFunction},
 		m_upgradeOldSolidity{upgradeOldSolidity},
 		m_version{std::move(_version)},
@@ -510,7 +518,7 @@ public:
 	}
 	void accept(TvmAstVisitor& _visitor) override;
 	bool operator==(TvmAstNode const&) const override { return false; } // TODO
-	bool isLib() const { return m_isLib; }
+	ContractType contractType() const { return m_contractType; }
 	bool saveAllFunction() const { return m_saveAllFunction; }
 	bool upgradeOldSolidity() const { return m_upgradeOldSolidity; }
 	std::string const& version() const { return m_version; }
@@ -518,13 +526,13 @@ public:
 	std::map<uint32_t, std::string> const& privateFunctions() const { return m_privateFunctions; }
 	std::map<uint32_t, std::string> const& getters() const { return m_getters; }
 private:
-	bool m_isLib{};
+	ContractType m_contractType;
 	bool m_saveAllFunction{};
 	bool m_upgradeOldSolidity{};
 	std::string m_version;
-	std::vector<Pointer<Function>> m_functions;
-	std::map<uint32_t, std::string> m_privateFunctions;
-	std::map<uint32_t, std::string> m_getters;
+	std::vector<Pointer<Function>> m_functions{};
+	std::map<uint32_t, std::string> m_privateFunctions{};
+	std::map<uint32_t, std::string> m_getters{};
 };
 
 Pointer<StackOpcode> gen(const std::string& cmd);

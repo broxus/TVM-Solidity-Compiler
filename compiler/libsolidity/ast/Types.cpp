@@ -3425,6 +3425,7 @@ std::string FunctionType::richIdentifier() const
 	case Kind::TVMConfigParam: id += "tvmconfigparam"; break;
 	case Kind::TVMDeploy: id += "tvmdeploy"; break;
 	case Kind::TVMDuePayment: id += "tvmduepayment"; break;
+	case Kind::TVMLoadLibrary: id += "tvmloadlibrary"; break;
 	case Kind::TVMDump: id += "tvmxxxdump"; break;
 	case Kind::TVMExit1: id += "tvmexit1"; break;
 	case Kind::TVMExit: id += "tvmexit"; break;
@@ -3442,6 +3443,8 @@ std::string FunctionType::richIdentifier() const
 	case Kind::TVMSetPubkey: id += "tvmsetpubkey"; break;
 	case Kind::TVMSetReplayProtTime: id += "tvmsetreplayprottime"; break;
 	case Kind::TVMSetcode: id += "tvmsetcode"; break;
+	case Kind::TVMUnpackData: id += "tvmunpackdata"; break;
+	case Kind::TVMPackData: id += "tvmpackdata"; break;
 
 	case Kind::AddressTransfer: id += "tvmtransfer"; break;
 
@@ -4707,10 +4710,11 @@ namespace {
 			{"initCodeHash", TypeProvider::function({}, {"uint256"}, FunctionType::Kind::TVMInitCodeHash, StateMutability::Pure)},
 			{"buyGas", TypeProvider::function({"uint"}, {}, FunctionType::Kind::TVMSetGasLimit, StateMutability::Pure)},
 			{"duePayment", TypeProvider::function({}, {TypeProvider::coins()}, {}, {""}, FunctionType::Kind::TVMDuePayment, StateMutability::Pure)},
+			{"loadLibrary", TypeProvider::function({TypeProvider::uint256()}, {TypeProvider::tvmcell()}, {""}, {""}, FunctionType::Kind::TVMLoadLibrary, StateMutability::Pure)},
 
 			// for stdlib
-			{"replayProtTime", TypeProvider::function({}, {"uint64"}, FunctionType::Kind::TVMReplayProtTime, StateMutability::Pure)},
-			{"setReplayProtTime", TypeProvider::function({"uint64"}, {}, FunctionType::Kind::TVMSetReplayProtTime, StateMutability::Pure)},
+			{"replayProtectionValue", TypeProvider::function({}, {"uint64"}, FunctionType::Kind::TVMReplayProtTime, StateMutability::Pure)},
+			{"setReplayProtectionValue", TypeProvider::function({"uint64"}, {}, FunctionType::Kind::TVMSetReplayProtTime, StateMutability::Pure)},
 			{"replayProtInterval", TypeProvider::function({}, {"uint64"}, FunctionType::Kind::TVMReplayProtInterval, StateMutability::Pure)},
 
 			{"rawReserve", TypeProvider::function(
@@ -4905,6 +4909,24 @@ namespace {
 				{{}},
 				FunctionType::Kind::ABIEncodeData,
 				StateMutability::Pure,
+				nullptr, FunctionType::Options::withArbitraryParameters()
+			)},
+			{"unpackData", TypeProvider::function(
+				{},
+				{},
+				{},
+				{},
+				FunctionType::Kind::TVMUnpackData,
+				StateMutability::Pure,
+				nullptr, FunctionType::Options::withArbitraryParameters()
+			)},
+			{"packData", TypeProvider::function(
+				{},
+				{},
+				{},
+				{},
+				FunctionType::Kind::TVMPackData,
+				StateMutability::NonPayable,
 				nullptr, FunctionType::Options::withArbitraryParameters()
 			)},
 			{"stateInitHash", TypeProvider::function(
@@ -7135,6 +7157,16 @@ TypeResult TvmCellType::binaryOperatorResult(Token _operator, const Type *_other
 		(_operator != Token::Equal && _operator != Token::NotEqual))
 		return nullptr;
 	return _other;
+}
+
+BoolResult TvmCellType::isExplicitlyConvertibleTo(Type const& _convertTo) const {
+	if (auto contractType = to<ContractType>(&_convertTo)) {
+		auto const& contractDefinition = contractType->contractDefinition();
+		if (contractDefinition.isContractLibrary()) {
+			return true;
+		}
+	}
+	return isExplicitlyConvertibleTo(_convertTo);
 }
 
 MemberList::MemberMap TvmBuilderType::nativeMembers(const ASTNode *) const

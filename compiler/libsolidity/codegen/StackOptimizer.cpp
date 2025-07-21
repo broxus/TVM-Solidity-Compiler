@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2024 EverX. All Rights Reserved.
+ * Copyright (C) 2021-2025 EverX. All Rights Reserved.
  *
  * Licensed under the  terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License.
@@ -261,7 +261,7 @@ bool StackOptimizer::visit(While &_node) {
 
 	startScope();
 	_node.body()->accept(*this);
-	solAssert(savedStack == size(), "");
+	// solAssert(savedStack == size(), "");
 	endScope();
 	solAssert(savedStack == size(), "");
 

@@ -105,8 +105,8 @@ TVMContractCompiler::generateContractCode(
 
 	fillInlineFunctions(ctx, contract, _sourceUnits);
 
-	// generate global constructor which inlines all contract's constructors
-	if (!ctx.isStdlib() && ctx.hasConstructor()) {
+	// generate a global constructor which inlines all contract's constructors
+	if (!ctx.isStdlib() && !ctx.getContract()->isContractLibrary() && ctx.storageLayout().hasConstructor()) {
 		StackPusher pusher{&ctx};
 		TVMConstructorCompiler compiler(pusher);
 		Pointer<Function> f = compiler.generateConstructors();
@@ -132,8 +132,8 @@ TVMContractCompiler::generateContractCode(
 					functions.emplace_back(TVMFunctionCompiler::generateReceive(ctx, _function));
 				}
 			} else if (_function->isFallback()) {
-				if (!ctx.isFallBackGenerated()) {
-					ctx.setIsFallBackGenerated();
+				if (ctx.fallBack() == nullptr) {
+					ctx.setFallback(_function);
 					functions.emplace_back(TVMFunctionCompiler::generateFallback(ctx, _function));
 				}
 			} else if (_function->isOnTickTock()) {
@@ -142,7 +142,7 @@ TVMContractCompiler::generateContractCode(
 				if (!ctx.isBaseFunction(_function))
 					functions.emplace_back(TVMFunctionCompiler::generateOnCodeUpgrade(ctx, _function));
 			} else {
-				if (!ctx.isStdlib() && _function->isPublic() && !ctx.isBaseFunction(_function)) {
+				if (!ctx.isStdlib() && !ctx.getContract()->isContractLibrary() && _function->isPublic() && !ctx.isBaseFunction(_function)) {
 					if (_function->visibility() == Visibility::Getter) {
 						functions.emplace_back(TVMFunctionCompiler::generateGetterFunction(ctx, _function));
 						uint32_t functionId = crc16(_function->name());
@@ -153,7 +153,8 @@ TVMContractCompiler::generateContractCode(
 						functions.emplace_back(TVMFunctionCompiler::generatePublicFunction(ctx, _function));
 						uint32_t functionId = ChainDataEncoder::calculateFunctionIDWithReason(_function,
 																					ReasonOfOutboundMessage::RemoteCallInternal);
-						ctx.addPublicFunction(functionId, _function->name());
+
+						ctx.addPublicFunction(_function, functionId, _function->name());
 					}
 				}
 				auto const[functionName, id] = ctx.functionInternalName(_function, true);
@@ -162,35 +163,15 @@ TVMContractCompiler::generateContractCode(
 		}
 	}
 
-	if (!ctx.isStdlib()) {
+	if (!ctx.isStdlib() && !ctx.getContract()->isContractLibrary()) {
 		functions.emplace_back(TVMFunctionCompiler::generateC4ToC7(ctx));
 		functions.emplace_back(TVMFunctionCompiler::generateDefaultC4(ctx));
-		{
-			StackPusher pusher{&ctx};
-			Pointer<Function> f = pusher.generateC7ToC4();
-			functions.emplace_back(f);
-		}
-		functions.emplace_back(TVMFunctionCompiler::updateOnlyTime(ctx));
+		functions.emplace_back(TVMFunctionCompiler::generateC7ToC4(ctx));
+		if (contract->externalMsgHeaders())
+			functions.emplace_back(TVMFunctionCompiler::updateOnlyTime(ctx));
 		functions.emplace_back(TVMFunctionCompiler::generateMainInternal(ctx, contract));
-		functions.emplace_back(TVMFunctionCompiler::generateMainExternal(ctx, contract));
-	}
-
-	for (VariableDeclaration const* vd : ctx.c4StateVariables()) {
-		if (vd->isPublic()) {
-			StackPusher pusher{&ctx};
-			Pointer<Function> f = TVMFunctionCompiler::generateGetter(pusher, vd);
-			functions.emplace_back(f);
-
-			std::vector<VariableDeclaration const*> outputs = {vd};
-			uint32_t functionId = ChainDataEncoder::calculateFunctionIDWithReason(
-				vd->name(),
-				{},
-				&outputs,
-				ReasonOfOutboundMessage::RemoteCallInternal,
-				nullopt,
-				false
-			);
-			ctx.addPublicFunction(functionId, vd->name());
+		if (contract->externalMsgHeaders()) {
+			functions.emplace_back(TVMFunctionCompiler::generateMainExternal(ctx, contract));
 		}
 	}
 
@@ -254,14 +235,11 @@ TVMContractCompiler::generateContractCode(
 	for (const auto&[name, types] : ctx.buildTuple())
 		functions.emplace_back(TVMFunctionCompiler::generateBuildTuple(ctx, name, types));
 
-	if (!ctx.isStdlib())
-		functions.emplace_back(TVMFunctionCompiler::generatePublicFunctionSelector(ctx, contract));
-
-
 	std::map<std::string, Pointer<Function>> functionsInMap;
 	for (const auto& func : functions) {
-		solAssert(functionsInMap.count(func->name()) == 0, "");
-		functionsInMap[func->name()] = func;
+		std::string name = func->name();
+		solAssert(functionsInMap.count(name) == 0, "");
+		functionsInMap[name] = func;
 	}
 	std::vector<Pointer<Function>> functionOrder;
 	for (std::string const& funcDef : ctx.callGraph().DAG()) {
@@ -278,8 +256,15 @@ TVMContractCompiler::generateContractCode(
 			functionOrder.emplace_back(func);
 	}
 
+	Contract::ContractType type;
+	if (ctx.isStdlib()) type = Contract::ContractType::StdLibrary;
+	else if (ctx.getContract()->isContractLibrary()) type = Contract::ContractType::ContractLibrary;
+	else type = Contract::ContractType::Contract;
+
 	Pointer<Contract> c = createNode<Contract>(
-			ctx.isStdlib(), ctx.getPragmaSaveAllFunctions(), pragmaHelper.hasUpgradeOldSol(),
+			type,
+			ctx.getPragmaSaveAllFunctions(),
+			pragmaHelper.hasUpgradeOldSol(),
 			std::string{"sol "} + solidity::frontend::VersionNumber,
 			functionOrder,
 			ctx.callGraph().privateFunctions(),

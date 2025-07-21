@@ -46,7 +46,6 @@ namespace TvmConst {
 		const int SelfDestruct = CarryAllMoney | DestroyAccount;
 	}
 	namespace Message {
-		const int DefaultMsgValue = 10'000 * 1'000; // 10'000 gas * 1'000 ton / gas (in workchain)
 		const int functionIdLength = 32;
 		const int timestampLength = 64;
 		namespace ReplayProtection {
@@ -91,6 +90,7 @@ namespace TvmConst {
 		const int WrongValueOfEnum = 73;
 		const int CallThatWasBeforeCtorCall = 76;
 		const int BadVariant = 77;
+		const int onCodeUpdataNot2 = 79;
 		const int IsNaN = 80;
 	}
 

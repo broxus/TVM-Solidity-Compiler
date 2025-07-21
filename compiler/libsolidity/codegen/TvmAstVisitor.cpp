@@ -20,6 +20,7 @@
 #include <libsolidity/codegen/TvmAstVisitor.hpp>
 #include <liblangutil/Exceptions.h>
 #include <libsolidity/codegen/TVMCommons.hpp>
+#include <libsolidity/codegen/TVMConstants.hpp>
 
 using namespace solidity::frontend;
 
@@ -95,6 +96,7 @@ bool Printer::visit(StackOpcode &_node) {
 	tabs();
 	if (_node.fullOpcode() == "BITNOT") m_out << "NOT";
 	else if (_node.fullOpcode() == "QBITNOT") m_out << "QNOT";
+	else if (_node.fullOpcode() == "PLDREFIDX 0") m_out << "PLDREF";
 	//else if (_node.fullOpcode() == "STVARUINT16") m_out << "STGRAMS";
 	//else if (_node.fullOpcode() == "LDVARUINT16") m_out << "LDGRAMS";
 	else if (_node.fullOpcode() == "TUPLE 1") m_out << "SINGLE";
@@ -718,12 +720,15 @@ bool Printer::visit(Contract &_node) {
 		}
 	}
 	bool hasOnTickTock = false;
+	bool hasMainExternal = false;
 	for (const Pointer<Function>& f : _node.functions()) {
 		hasOnTickTock |= f->name() == "onTickTock";
+		hasMainExternal |= f->name() == "main_external";
 		f->accept(*this);
 	}
 
-	if (!_node.isLib()) {
+	switch (_node.contractType()) {
+	case Contract::ContractType::Contract: {
 		m_out << "; The code below forms a value of the StateInit type." << std::endl;
 		m_out << ".blob x4_ ; split_depth = nothing" << std::endl;
 		m_out << ".blob x4_ ; special = nothing" << std::endl;
@@ -734,11 +739,7 @@ bool Printer::visit(Contract &_node) {
 			++m_tab;
 
 			tabs(); m_out << "SETCP0" << std::endl;
-			tabs(); m_out << "DICTPUSHCONST 19" << std::endl;
-			tabs(); m_out << "DICTIGETJMPZ" << std::endl;
-			tabs(); m_out << "THROW 11" << std::endl;
-
-			tabs(); m_out << ".code-dict-cell 19, {" << std::endl;
+			tabs(); m_out << "DICTPUSHCONST 19, {" << std::endl;
 			++m_tab;
 
 			auto addToDict = [&](int id, std::string const& name){
@@ -748,7 +749,8 @@ bool Printer::visit(Contract &_node) {
 			};
 
 			addToDict(0, "main_internal");
-			addToDict(-1, "main_external");
+			if (hasMainExternal)
+				addToDict(-1, "main_external");
 			if (hasOnTickTock)
 				addToDict(-2, "onTickTock");
 			for (auto const& [id, name] : _node.getters())
@@ -757,19 +759,24 @@ bool Printer::visit(Contract &_node) {
 				addToDict(id, name);
 
 			--m_tab;
-			tabs(); m_out << "}" << std::endl; // end .code-dict-cell 19, {
+			tabs(); m_out << "}" << std::endl; // end DICTPUSHCONST 19, {
+
+			tabs(); m_out << "DICTIGETJMPZ" << std::endl;
+			tabs(); m_out << "THROW 11" << std::endl;
 
 			--m_tab;
-			m_out << "}" << std::endl; // end code
+			tabs(); m_out << "}" << std::endl; // end code
 		};
 
 		if (_node.upgradeOldSolidity()) {
 			int func_id = 2;
-			m_out << ".cell { ; wrapper for code" << std::endl;
+			tabs(); m_out << ".cell { ; wrapper for code" << std::endl;
+			++m_tab;
+			tabs(); m_out << ".cell { ; wrapper for code" << std::endl;
 			++m_tab;
 			tabs(); m_out << "PUSHINT " << func_id << std::endl;
 			tabs(); m_out << "EQUAL" << std::endl;
-			tabs(); m_out << "THROWIFNOT 79" << std::endl;
+			tabs(); m_out << "THROWIFNOT " << TvmConst::RuntimeException::onCodeUpdataNot2 << std::endl;
 			tabs(); m_out << "PUSHREF" << std::endl;
 			++m_tab;
 			printCode();
@@ -781,7 +788,9 @@ bool Printer::visit(Contract &_node) {
 			tabs(); m_out << "POP C3" << std::endl;
 			tabs(); m_out << "CALL 2" << std::endl;
 			--m_tab;
-			m_out << "}" << std::endl; // end code
+			tabs(); m_out << "}" << std::endl; // end code
+			--m_tab;
+			tabs(); m_out << "}" << std::endl; // end code
 		} else {
 			printCode();
 		}
@@ -791,7 +800,31 @@ bool Printer::visit(Contract &_node) {
 		m_out << "	.inline-computed-cell default_data_cell, 0" << std::endl;
 		m_out << "}" << std::endl;
 		m_out << ".blob x4_ ; library = hme_empty" << std::endl;
+		break;
 	}
+	case Contract::ContractType::ContractLibrary: {
+		tabs(); m_out << "SETCP0" << std::endl;
+		tabs(); m_out << "DICTPUSHCONST 19, {" << std::endl;
+		++m_tab;
+		for (Pointer<Function> const& fun : _node.functions()) {
+			if (fun->isPublicInternalMsgFunction()) {
+				auto binStr = StrUtils::toBitString(fun->functionId().value(), 19, false).value();
+				auto const slice = StrUtils::binaryStringToSlice(binStr);
+				tabs(); m_out << "x" + slice + " = " + fun->name() + "," << std::endl;
+			}
+		}
+		--m_tab;
+		tabs(); m_out << "}" << std::endl; // end DICTPUSHCONST 19, {
+		tabs(); m_out << "DICTUGETJMP" << std::endl;
+		tabs(); m_out << "THROW 200" << std::endl;
+		break;
+	}
+	case Contract::ContractType::StdLibrary: {
+		// Do nothing
+		break;
+	}
+	}
+
 	return false;
 }
 

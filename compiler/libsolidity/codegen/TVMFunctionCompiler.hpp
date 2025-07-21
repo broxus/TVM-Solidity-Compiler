@@ -39,6 +39,7 @@ private:
 public:
 	static Pointer<Function> updateOnlyTime(TVMCompilerContext& ctx);
 	static Pointer<Function> generateC4ToC7(TVMCompilerContext& ctx);
+	static Pointer<Function> generateC7ToC4(TVMCompilerContext& ctx);
 	static Pointer<Function> generateDefaultC4(TVMCompilerContext& ctx);
 	static Pointer<Function> generateBuildTuple(TVMCompilerContext& ctx, std::string const& name, const std::vector<Type const*>& types);
 	static Pointer<Function> generateNewArrays(TVMCompilerContext& ctx, std::string const& name, FunctionCall const* arr);
@@ -57,7 +58,7 @@ public:
 	static Pointer<Function> generateGetterFunction(TVMCompilerContext& ctx, FunctionDefinition const* function);
 	static void generateFunctionWithModifiers(StackPusher& pusher, FunctionDefinition const* function, bool pushArgs);
 	static Pointer<Function> generateGetter(StackPusher& pusher, VariableDeclaration const* vd);
-	static Pointer<Function> generatePublicFunctionSelector(TVMCompilerContext& pusher, ContractDefinition const *contract);
+	void generatePublicFunctionSelector(bool isExternal) const;
 	void decodeFunctionParamsAndInitVars(bool hasCallback);
 
 protected:
@@ -75,7 +76,7 @@ protected:
 	std::optional<ControlFlowInfo> lastLoop() const;
 	bool lastAnalyzerBeforeLoop() const;
 
-	void emitOnPublicFunctionReturn();
+	void emitOnPublicFunctionReturn() const;
 	void pushDefaultParameters(const ast_vec<VariableDeclaration>& returnParameters);
 
 	void acceptExpr(const Expression* expr, bool isResultNeeded = true);
@@ -116,17 +117,13 @@ private:
 
 	void setGlobSenderAddressIfNeed();
 	void setCtorFlag();
-	void setCopyleft();
-	Pointer<Function> generateMainExternalForAbiV2();
+	void setCopyleft() const;
 
 	void pushMsgPubkey();
 	void checkSignatureAndReadPublicKey();
-	void defaultReplayProtection();
-	void expire();
-	void callPublicFunctionOrFallback();
-	void pushC4ToC7IfNeed();
-	void updC4IfItNeeds();
-	void pushReceiveOrFallback();
+	void pushC4ToC7IfNeed() const;
+	void updC4IfItNeeds() const;
+	void pushReceiveOrFallbackAndLoadFuncId();
 
 	void buildPublicFunctionSelector(const std::vector<std::pair<uint32_t, std::string>>& functions, int left, int right,
 									 PublicFunctionSelector const& pfs);

@@ -50,6 +50,7 @@
 
 #include <libsolidity/codegen/TVMCommons.hpp>
 #include <libsolidity/codegen/TVMConstants.hpp>
+#include <libsolidity/codegen/TVMPusher.hpp>
 
 using namespace solidity;
 using namespace solidity::util;
@@ -327,6 +328,16 @@ void TypeChecker::typeCheckABIEncodeStateInit(
 			if (varInitInd != -1)
 				list = dynamic_cast<InitializerList const *>(args.at(varInitInd).get());
 			checkInitList(list, *ct, _functionCall.location());
+
+			auto const& contractDefinition = ct->contractDefinition();
+			if (contractDefinition.externalMsgHeaders() == nullptr && hasPubkey) {
+				m_errorReporter.typeError(
+					8286_error,
+					args.at(findName("pubkey"))->location(),
+					SecondarySourceLocation().append("The contract is here:", contractDefinition.location()),
+					"Unexpected parameter \"pubkey\". Contract doesn't receive external messages."
+				);
+			}
 		}
 	}
 }
@@ -647,12 +658,17 @@ bool TypeChecker::isBadAbiType(
 		}
 		case Type::Category::Mapping: {
 			auto mappingType = to<MappingType>(curType);
-			auto intKey = to<IntegerType>(mappingType->keyType());
-			auto addrKey = isIn(mappingType->keyType()->category(), Type::Category::Address, Type::Category::AddressStd);
-			if (intKey == nullptr && !addrKey) {
+			auto keyType = mappingType->keyType()->category();
+			if (!isIn(keyType,
+				Type::Category::Integer,
+				// Type::Category::Bool, TODO support in ABI
+				// Type::Category::FixedBytes, TODO support in ABI
+				Type::Category::Enum,
+				Type::Category::Address, Type::Category::AddressStd)
+			) {
 				printError(
-					"Key type of the mapping must be "
-			   		"any of int<M>/uint<M> types with M from 8 to 256 or std address.");
+					"Key type of the mapping must be any of "
+			   		"intN, uintN, enum or address_std.");
 				return true;
 			}
 			if (isBadAbiType(origVarLoc, mappingType->valueType(), curVarLoc, usedStructs, doPrintErr)) {
@@ -750,13 +766,10 @@ bool TypeChecker::visit(FunctionDefinition const& _function)
 		m_errorReporter.syntaxError(5811_error, _function.location(), "Free functions cannot have modifiers.");
 
 	if (_function.isExternalMsg() || _function.isInternalMsg()) {
-		if (_function.isExternalMsg() && _function.isInternalMsg()) {
-			m_errorReporter.typeError(6672_error, _function.location(), R"("internalMsg" and "externalMsg" cannot be used together.)");
-		}
 		if (!_function.functionIsExternallyVisible()) {
 			m_errorReporter.typeError(7446_error, _function.location(), R"(Private/internal function can't be marked as internalMsg/externalMsg.)");
 		}
-		if (_function.isReceive() || _function.isFallback() || _function.isOnBounce() || _function.isOnTickTock()) {
+		if (_function.isReceive() || _function.isOnBounce() || _function.isOnTickTock()) {
 			m_errorReporter.typeError(1399_error, _function.location(), R"(receiver, fallback, onBounce and onTickTock functions can't be marked as internalMsg/externalMsg.)");
 		}
 	}
@@ -2804,7 +2817,8 @@ void TypeChecker::typeCheckFunctionGeneralChecks(
 					ma->memberName() == "encodeOldDataInit" ||
 					ma->memberName() == "buildExtMsg" ||
 					ma->memberName() == "encodeIntMsg" ||
-					ma->memberName() == "buildIntMsg")
+					ma->memberName() == "buildIntMsg" ||
+					ma->memberName() == "packData")
 				isFunctionWithDefaultValues = true;
 			}
 		}
@@ -2939,10 +2953,13 @@ void TypeChecker::typeCheckFunctionGeneralChecks(
 				{
 					if (j < paramArgMap.size())
 						paramArgMap[j] = nullptr;
-					if ((_functionType->kind() == FunctionType::Kind::ABIEncodeStateInit ||
-							_functionType->kind() == FunctionType::Kind::ABIEncodeData)
-							&& *argumentNames.at(i) == "contr")
-					{
+					if (
+						(
+							(_functionType->kind() == FunctionType::Kind::ABIEncodeStateInit || _functionType->kind() == FunctionType::Kind::ABIEncodeData)
+							&& *argumentNames.at(i) == "contr"
+						) ||
+						_functionType->kind() == FunctionType::Kind::TVMPackData
+					) {
 						// Do nothing.
 						// It's checked in TypeChecker::visit(FunctionCall const& _functionCall)
 					} else {
@@ -3813,6 +3830,39 @@ bool TypeChecker::visit(FunctionCall const& _functionCall)
 			returnTypes = functionType->returnParameterTypes();
 			break;
 		}
+		case FunctionType::Kind::TVMUnpackData: {
+			auto defaultError = [&](const SourceLocation& loc) {
+				m_errorReporter.fatalParserError(
+					8905_error,
+					loc,
+					R"(Expected "unpacked" state variable.)"
+				);
+			};
+			checkAtLeastOneArg();
+			for (ASTPointer<Expression const> const& arg: arguments) {
+				auto identifier = to<Identifier>(arg.get());
+				if (identifier == nullptr)
+					defaultError(arg->location());
+				Declaration const* declaration = identifier->annotation().referencedDeclaration;
+				auto variableDeclaration = to<VariableDeclaration>(declaration);
+				if (variableDeclaration == nullptr)
+					defaultError(arg->location());
+				ContractDefinition const* contract = variableDeclaration->annotation().contract;
+				if (*m_currentContract != *contract) {
+					m_errorReporter.typeError(
+						7413_error,
+						arg->location(),
+						SecondarySourceLocation().append("The contract is here:", m_currentContract->location()),
+						R"(Contract doesn't have state variable ")" + declaration->name() + "\""
+					);
+				}
+				if (!variableDeclaration->isUnpacked())
+					defaultError(arg->location());
+
+				returnTypes.emplace_back(declaration->type());
+			}
+			break;
+		}
 		case FunctionType::Kind::ABIDecodeData:
 		case FunctionType::Kind::TVMSliceLoadStateVars:
 		{
@@ -3846,13 +3896,10 @@ bool TypeChecker::visit(FunctionCall const& _functionCall)
 					"Expected contract type."
 				);
 
-			std::vector<VariableDeclaration const *> stateVars = ::stateVariables(&ct->contractDefinition(), false);
-			returnTypes.push_back(TypeProvider::uint256()); // pubkey
-			returnTypes.push_back(TypeProvider::uint(64)); // timestamp
-			if (::hasConstructor(ct->contractDefinition()))
-				returnTypes.push_back(TypeProvider::boolean()); // constructor flag
-			for (VariableDeclaration const * v : stateVars)
-				returnTypes.push_back(v->type());
+			StorageLayout storageLayout{&ct->contractDefinition()};
+			std::vector<Type const *> stateVarTypes = storageLayout.getC4Types();
+			for (Type const * type : stateVarTypes)
+				returnTypes.push_back(type);
 			if (functionType->kind() == FunctionType::Kind::ABIDecodeData)
 			{
 				paramTypes.emplace_back(arguments.at(0)->annotation().type);
@@ -4137,6 +4184,34 @@ bool TypeChecker::visit(FunctionCall const& _functionCall)
 			typeCheckABIEncodeStateInit(_functionCall, hasName, findName);
 			break;
 		}
+		case FunctionType::Kind::TVMPackData: {
+			typeCheckFunctionCall(_functionCall, functionType);
+
+			std::map<std::string, Type const*> varToType;
+			for (const auto& stateVar : m_currentContract->stateVariables()) {
+				if (stateVar->isUnpacked()) {
+					solAssert(varToType.count(stateVar->name()) == 0);
+					varToType[stateVar->name()] = stateVar->type();
+				}
+			}
+
+			int i = 0;
+			for (const auto & name : argumentNames) {
+				if (varToType.count(*name) == 0) {
+					m_errorReporter.fatalTypeError(
+						5645_error,
+						_functionCall.nameLocations().at(i),
+						SecondarySourceLocation().append("The contract is here:", m_currentContract->location()),
+						R"(Contract doesn't have state variable ")" + *name + "\""
+					);
+				}
+				paramTypes.emplace_back(varToType.at(*name));
+				++i;
+			}
+
+			returnTypes = functionType->returnParameterTypes();
+			break;
+		}
 		case FunctionType::Kind::ABIEncodeData: {
 			checkHasNamedParams();
 			typeCheckFunctionCall(_functionCall, functionType);
@@ -4384,8 +4459,17 @@ bool TypeChecker::visit(FunctionCall const& _functionCall)
 		default:
 		{
 			typeCheckFunctionCall(_functionCall, functionType);
+			// In TVM external function return nothing
 			if (functionType->kind() != FunctionType::Kind::External)
 				returnTypes = functionType->returnParameterTypes();
+			else if (functionType->hasDeclaration()) {
+				if (auto function = dynamic_cast<FunctionDefinition const*>(&functionType->declaration())){
+					auto contract = function->annotation().contract;
+					if (contract && contract->isContractLibrary()) {
+						returnTypes = functionType->returnParameterTypes();
+					}
+				}
+			}
 			break;
 		}
 		}

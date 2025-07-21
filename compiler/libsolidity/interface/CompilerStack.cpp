@@ -656,6 +656,13 @@ bool CompilerStack::analyzeLegacy(bool _noErrorsSoFar)
 		}
 	}
 
+	if (noErrors) {
+		TVMAnalyzerPackUnpack analyzerPackUnpack(m_errorReporter);
+		for (Source const* source: m_sourceOrder)
+			if (source->ast && !analyzerPackUnpack.analyze(*source->ast))
+				noErrors = false;
+	}
+
 	return noErrors;
 }
 
@@ -834,13 +841,14 @@ std::pair<bool, bool> CompilerStack::compile(bool json)
 						}
 						if (m_doPrivateFunctionIds)
 						{
-							auto functionIds = TVMABI::generatePrivateFunctionIdsJson(*c.contract, getSourceUnits(), pragmaHelper);
-							c.privateFunctionIds = std::make_unique<Json::Value>(functionIds);
-						}
-						if (m_doPrivateFunctionIds)
-						{
-							auto functionIds = TVMABI::generatePrivateFunctionIdsJson(*c.contract, getSourceUnits(), pragmaHelper);
-							c.privateFunctionIds = std::make_unique<Json::Value>(functionIds);
+							// TODO walk around
+							// compilerStack.printPrivateFunctionIds(); is always calling
+							// parse it from config
+							if (c.contract->canBeDeployed())
+							{
+								auto functionIds = TVMABI::generatePrivateFunctionIdsJson(*c.contract, getSourceUnits(), pragmaHelper);
+								c.privateFunctionIds = std::make_unique<Json::Value>(functionIds);
+							}
 						}
 					} else {
 						TVMCompilerProceedContract(

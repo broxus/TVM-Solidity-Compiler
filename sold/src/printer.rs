@@ -25,7 +25,7 @@ pub fn print_abi_json_canonically(out: &mut File, value: &serde_json::Value) -> 
     writeln!(out, "{{")?;
     writeln!(out, "\t\"ABI version\": {},", root["ABI version"])?;
     if let Some(version) = root.get("version") {
-        writeln!(out, "\t\"version\": {},", version)?;
+        writeln!(out, "\t\"version\": {version},")?;
     }
     if let Some(header) = root.get("header") {
         write!(out, "\t\"header\": [")?;
@@ -104,7 +104,7 @@ fn print(out: &mut File, value: &serde_json::Value) -> Status {
         writeln!(out, "\t\t\t\"name\": {},", function["name"])?;
 
         if let Some(id) = function.get("id") {
-            writeln!(out, "\t\t\t\"id\": {},", id)?;
+            writeln!(out, "\t\t\t\"id\": {id},")?;
         }
 
         writeln!(out, "\t\t\t\"inputs\": [")?;

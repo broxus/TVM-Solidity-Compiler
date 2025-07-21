@@ -18,6 +18,8 @@
 #include <liblangutil/ErrorReporter.h>
 #include <libsolidity/codegen/TVMConstants.hpp>
 
+#include "TVM.hpp"
+
 
 using namespace solidity::frontend;
 using namespace solidity::langutil;
@@ -74,26 +76,9 @@ bool TVMAnalyzer::visit(MemberAccess const& _node) {
 	return true;
 }
 
-bool TVMAnalyzer::visit(ContractDefinition const& contract) {
-	std::map<std::string, EventDefinition const*> used;
-	for (EventDefinition const* event : contract.definedInterfaceEvents()) {
-		if (used.count(event->name())) {
-			m_errorReporter.declarationError(
-				5022_error,
-				event->location(),
-				SecondarySourceLocation().append("Another declaration is here:", used.at(event->name())->location()),
-				"Event overriding is not supported."
-			);
-		} else {
-			used[event->name()] = event;
-		}
-	}
-	return true;
-}
-
 bool TVMAnalyzer::visit(FunctionDefinition const& _function) {
 	if (_function.isImplemented())
-			m_currentFunction = &_function;
+		m_currentFunction = &_function;
 	else
 		solAssert(!m_currentFunction, "");
 
@@ -268,24 +253,24 @@ bool TVMAnalyzerFlag128::visit(FunctionCall const& _functionCall) {
 	}
 
 	if (m_functionCallWith128Flag != nullptr) {
-		m_errorReporter.warning(2526_error,
+		m_errorReporter.typeError(2526_error,
 			_functionCall.location(),
-			"External function call will fail on action phase because all balance was already send.",
 			SecondarySourceLocation().append("Sending all balance:",
-						m_functionCallWith128Flag->location())
+						m_functionCallWith128Flag->location()),
+			"External function call will fail on action phase because all balance was already send."
 		);
 	}
 
-	if (flagValue.has_value() && flagValue == 128) {
+	if (flagValue.has_value() && 128 <= flagValue && flagValue <= 128 + 3) {
 		m_functionCallWith128Flag = &_functionCall;
 
 		if (m_function && !m_function->returnParameters().empty() && m_function->functionIsExternallyVisible()) {
 			if (m_functionCallWith128Flag != nullptr) {
-				m_errorReporter.warning(3337_error,
+				m_errorReporter.typeError(3337_error,
 					m_function->location(),
-					"Public function (that returns some parameters) will emit the event. It will fail on action phase because all balance was already send.",
 					SecondarySourceLocation().append("Sending all balance:",
-								m_functionCallWith128Flag->location())
+								m_functionCallWith128Flag->location()),
+					"Public function (that returns some parameters) will emit the event. It will fail on action phase because all balance was already send."
 				);
 			}
 		}
@@ -296,11 +281,57 @@ bool TVMAnalyzerFlag128::visit(FunctionCall const& _functionCall) {
 
 bool TVMAnalyzerFlag128::visit(EmitStatement const& _emit) {
 	if (m_functionCallWith128Flag != nullptr) {
-		m_errorReporter.warning(8901_error,
+		m_errorReporter.typeError(8901_error,
 			_emit.location(),
-			"Emitting the event will fail on action phase because all balance was already send.",
 			SecondarySourceLocation().append("Sending all balance:",
-						m_functionCallWith128Flag->location())
+						m_functionCallWith128Flag->location()),
+			"Emitting the event will fail on action phase because all balance was already send."
+		);
+	}
+	return true;
+}
+
+TVMAnalyzerPackUnpack::TVMAnalyzerPackUnpack(ErrorReporter &_errorReporter):
+	m_errorReporter(_errorReporter)
+{
+}
+
+bool TVMAnalyzerPackUnpack::analyze(const SourceUnit &_sourceUnit)
+{
+	_sourceUnit.accept(*this);
+	return !m_errorReporter.hasErrors();
+}
+
+bool TVMAnalyzerPackUnpack::visit(FunctionCall const& _functionCall) {
+
+	auto funcType = to<FunctionType>(_functionCall.expression().annotation().type);
+	if (funcType && funcType->kind() == FunctionType::Kind::TVMUnpackData) {
+		return false;
+	}
+
+	return true;
+}
+
+bool TVMAnalyzerPackUnpack::visit(Identifier const& _node) {
+	auto varDecl = to<VariableDeclaration>(_node.annotation().referencedDeclaration);
+	if (varDecl && varDecl->isUnpacked()) {
+		m_errorReporter.typeError(228_error,
+			_node.location(),
+			SecondarySourceLocation().append(
+				"Declaration of unpacked variable:",
+				varDecl->location()
+			),
+			"Using unpacked variable. Use tvm.unpackData(...) to get the variable."
+		);
+	}
+	return true;
+}
+
+bool TVMAnalyzerPackUnpack::visit(VariableDeclaration const& _node) {
+	if (_node.isUnpacked() && _node.value() != nullptr) {
+		m_errorReporter.typeError(228_error,
+			_node.location(),
+		"Unpacked variable can not be initialized here."
 		);
 	}
 	return true;
@@ -340,7 +371,10 @@ bool ContactsUsageScanner::visit(FunctionCall const& _functionCall) {
 }
 
 bool ContactsUsageScanner::visit(const MemberAccess &_node) {
-	if (getType(&_node.expression())->category() == Type::Category::Magic) {
+	auto const& expr = _node.expression();
+	auto type = expr.annotation().type;
+
+	if (type->category() == Type::Category::Magic) {
 		auto identifier = to<Identifier>(&_node.expression());
 		if (identifier) {
 			if (identifier->name() == "msg" && _node.memberName() == "sender") {

@@ -32,9 +32,9 @@ fn get_absolute_path<P: AsRef<Path>>(path: P) -> Result<PathBuf, std::io::Error>
 
 fn find_boost_lib_name(prefix: &str, boost_lib_dir: &Path) -> Result<String, String> {
     for entry in fs::read_dir(boost_lib_dir)
-        .map_err(|e| format!("Failed to read Boost lib dir {:?}: {}", boost_lib_dir, e))?
+        .map_err(|e| format!("Failed to read Boost lib dir {boost_lib_dir:?}: {e}"))?
     {
-        let entry = entry.map_err(|e| format!("Failed to read entry in Boost lib dir: {}", e))?;
+        let entry = entry.map_err(|e| format!("Failed to read entry in Boost lib dir: {e}"))?;
         let file_name = entry.file_name();
         let file_name_str = file_name.to_string_lossy();
 
@@ -46,8 +46,7 @@ fn find_boost_lib_name(prefix: &str, boost_lib_dir: &Path) -> Result<String, Str
         }
     }
     Err(format!(
-        "Could not find Boost library starting with '{}' in {:?}",
-        prefix, boost_lib_dir
+        "Could not find Boost library starting with '{prefix}' in {boost_lib_dir:?}"
     ))
 }
 
@@ -66,7 +65,8 @@ fn main() {
     config
         .define("WITH_TESTS", "OFF")
         .define("SOLC_LINK_STATIC", "OFF")
-        .define("SOLC_STATIC_STDLIBS", "OFF");
+        .define("SOLC_STATIC_STDLIBS", "OFF")
+        .define("PEDANTIC", "OFF");
 
     if cfg!(target_os = "windows") {
         let boost_root_dir = compiler_dir.join("deps/boost");
@@ -90,7 +90,7 @@ fn main() {
     );
 
     for lib in ["solc", "solidity", "langutil", "solutil", "jsoncpp"] {
-        println!("cargo:rustc-link-lib=static={}", lib);
+        println!("cargo:rustc-link-lib=static={lib}");
     }
 
     if cfg!(target_os = "windows") {
@@ -103,7 +103,7 @@ fn main() {
         );
         let boost_fs_lib = find_boost_lib_name("libboost_filesystem", &absolute_boost_lib_dir)
             .expect("Failed to find boost_filesystem lib name");
-        println!("cargo:rustc-link-lib=static={}", boost_fs_lib);
+        println!("cargo:rustc-link-lib=static={boost_fs_lib}");
     } else {
         if cfg!(target_os = "macos") {
             let mut boost_lib_path_found = false;
@@ -126,7 +126,7 @@ fn main() {
                 println!("build.rs: BOOST_ROOT not found or invalid, falling back to Homebrew paths for Boost.");
                 match env::var("HOMEBREW_PREFIX") {
                     Ok(brew_prefix) => {
-                        println!("cargo:rustc-link-search=native={}/lib", brew_prefix);
+                        println!("cargo:rustc-link-search=native={brew_prefix}/lib");
                     }
                     Err(_) => {
                         println!("cargo:rustc-link-search=native=/opt/homebrew/lib");

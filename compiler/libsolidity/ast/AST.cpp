@@ -355,6 +355,59 @@ FunctionDefinition const* ContractDefinition::nextConstructor(ContractDefinition
 	return nullptr;
 }
 
+bool ExternalMsgHeaders::hasTime() const {
+	return has("time");
+}
+
+bool ExternalMsgHeaders::hasExpire() const {
+	return has("expire");
+}
+
+bool ExternalMsgHeaders::hasPubkey() const {
+	return has("pubkey");
+}
+
+bool ExternalMsgHeaders::has(std::string const& name) const
+{
+	return std::any_of(m_headerNames.begin(), m_headerNames.end(), [&](std::string x) { return x == name; });
+}
+
+ASTPointer<ExternalMsgHeaders> const ContractDefinition::externalMsgHeaders() const
+{
+	// from derived to base
+	for (ContractDefinition const* c: annotation().linearizedBaseContracts)
+	{
+		if (c->m_externalMsgHeaders != nullptr)
+			return c->m_externalMsgHeaders;
+	}
+	return nullptr;
+}
+
+ASTPointer<ReplayProtection> const ContractDefinition::replayProtection() const
+{
+	// from derived to base
+	for (ContractDefinition const* c: annotation().linearizedBaseContracts)
+	{
+		if (c->m_replayProtection != nullptr)
+			return c->m_replayProtection;
+	}
+	return nullptr;
+}
+
+FunctionDefinition const * ContractDefinition::afterSignatureCheck() const
+{
+	FunctionDefinition const *res = {};
+	for (ContractDefinition const* c : annotation().linearizedBaseContracts) {
+		for (FunctionDefinition const *f: c->definedFunctions()) {
+			if (f->name() == "afterSignatureCheck") {
+				solAssert(res == nullptr, "");
+				res = f;
+			}
+		}
+	}
+	return res;
+}
+
 std::multimap<std::string, FunctionDefinition const*> const& ContractDefinition::definedFunctionsByName() const
 {
 	return m_definedFunctionsByName.init([&]{

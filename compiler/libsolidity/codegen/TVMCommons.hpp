@@ -157,9 +157,15 @@ dictKeyValue(Type const* type);
 std::tuple<Type const*, Type const*>
 realDictKeyValue(Type const* type);
 
-
 std::vector<ContractDefinition const*> getContractsChain(ContractDefinition const* contract);
-std::vector<VariableDeclaration const *> stateVariables(ContractDefinition const* contract, bool _withNoStorage);
+
+enum class StateVarType {
+	Usual,
+	NoStorage,
+	Unpacked,
+};
+
+std::vector<VariableDeclaration const *> stateVariables(ContractDefinition const* contract, StateVarType stateVarType);
 
 bool isSuper(Expression const* expr);
 bool isAddressThis(const FunctionCall* funCall);
@@ -169,8 +175,6 @@ FunctionDefinition const* getSuperFunction(
 	const ContractDefinition* mainContract,
 	const std::string& hexName
 );
-
-FunctionDefinition const* hasConstructor(ContractDefinition const& contract);
 
 [[noreturn]]
 void cast_error(const ASTNode& node, const std::string& error_message);
@@ -184,35 +188,10 @@ public:
 			pragmaDirectives{_pragmaDirectives} {
 	}
 
-	bool hasTime()   const { return !std::get<0>(hasHeader("notime")); }
-	bool hasPubkey() const { return std::get<0>(hasHeader("pubkey")); }
-	bool hasExpire() const { return std::get<0>(hasHeader("expire")); }
-
-	std::tuple<bool, PragmaDirective const *> hasHeader(const std::string& str) const {
-		for (PragmaDirective const *pd : pragmaDirectives) {
-			if (pd->literals().size() == 2 &&
-				pd->literals()[0] == "AbiHeader" &&
-				pd->literals()[1] == str) {
-				return {true, pd};
-			}
-		}
-		return {false, nullptr};
-	}
-
 	bool hasIgnoreIntOverflow() const {
 		return std::any_of(pragmaDirectives.begin(), pragmaDirectives.end(), [](const auto& pd){
 			return pd->literals().size() == 1 && pd->literals()[0] == "ignoreIntOverflow";
 		});
-	}
-
-	std::optional<std::vector<ASTPointer<Expression>>> hasMsgValue() const {
-		for (PragmaDirective const *pd : pragmaDirectives) {
-			if (pd->literals().size() == 1 &&
-				pd->literals()[0] == "msgValue") {
-				return pd->parameter();
-			}
-		}
-		return {};
 	}
 
 	std::optional<std::vector<ASTPointer<Expression>>> hasCopyleft() const {
@@ -235,13 +214,18 @@ private:
 	std::vector<PragmaDirective const *> const& pragmaDirectives;
 };
 
+class ABITypeSize {
+public:
+	explicit ABITypeSize(Type const* _type);
 
-struct ABITypeSize {
+private:
+	void init(Type const* _type);
+
+public:
+	bool fixedSize = false;
+	bool fixedRefs = false;
 	int maxBits = -1;
 	int maxRefs = -1;
-
-	explicit ABITypeSize(Type const* _type);
-	void init(Type const* _type);
 };
 
 inline std::pair<std::vector<Type const*>, std::vector<ASTNode const*>>
@@ -305,6 +289,9 @@ private:
 
 std::vector<VariableDeclaration const*>
 convertArray(std::vector<ASTPointer<VariableDeclaration>> const& arr);
+
+std::vector<Type const*>
+getTypesFromVarDecls(std::vector<VariableDeclaration const*> const& arr);
 
 std::vector<Type const*>
 getTypesFromVarDecls(std::vector<ASTPointer<VariableDeclaration>> const& arr);
@@ -396,6 +383,7 @@ namespace MathConsts {
 
 bool isFitUselessUnary(Type const* common, Token op);
 bool isFitUseless(Type const* left, Type const* right, Type const* common, Token op);
+bool isInRange257(bigint value);
 
 unsigned short crc16(std::string const& str);
 

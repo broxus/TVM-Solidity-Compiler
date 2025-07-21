@@ -33,7 +33,7 @@ using namespace solidity;
 
 namespace {
 void printReportBug() {
-	std::cerr << "Please report your bug to https://github.com/everx-labs/TVM-Solidity-Compiler/issues" << std::endl;
+	std::cerr << "Please report your bug to https://github.com/broxus/TVM-Solidity-Compiler/issues" << std::endl;
 }
 }
 

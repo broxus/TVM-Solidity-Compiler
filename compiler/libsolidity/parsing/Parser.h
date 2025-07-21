@@ -102,6 +102,7 @@ private:
 	/// @returns an std::pair<ContractKind, bool>, where
 	/// result.second is set to true, if an abstract contract was parsed, false otherwise.
 	std::pair<ContractKind, bool> parseContractKind();
+	std::tuple<ASTPointer<ExternalMsgHeaders>, ASTPointer<ReplayProtection>, bool> parseAttributes();
 	ASTPointer<ContractDefinition> parseContractDefinition();
 	ASTPointer<InheritanceSpecifier> parseInheritanceSpecifier();
 	Visibility parseVisibilitySpecifier();

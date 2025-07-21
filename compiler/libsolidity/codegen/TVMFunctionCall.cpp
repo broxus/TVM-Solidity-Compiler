@@ -132,6 +132,7 @@ void FunctionCallCompiler::compile() {
 					checkForTvmSendFunction(*m_memberAccess) ||
 					checkForTvmConfigParamFunction(*m_memberAccess) ||
 					checkForTvmFunction(*m_memberAccess) ||
+					checkForTvmC4(*m_memberAccess) ||
 					checkTvmABIDeployMethods(category)
 				) {
 					// do nothing
@@ -546,7 +547,7 @@ std::function<void()> FunctionCallCompiler::generateDataSection(
 				std::vector<PragmaDirective const *> _pragmaDirectives;
 				PragmaDirectiveHelper pragmaHelper{_pragmaDirectives};
 				TVMCompilerContext cc{&ct->contractDefinition(), pragmaHelper};
-				std::vector<std::pair<VariableDeclaration const*, int>> staticVars = cc.getStaticVariables();
+				std::vector<std::pair<VariableDeclaration const*, int>> staticVars = cc.storageLayout().getStaticVariables();
 				auto initVars = to<InitializerList>(vars);
 				for (size_t i = 0; i < initVars->names().size(); ++i) {
 					const ASTPointer<ASTString> &name = initVars->names().at(i);
@@ -568,23 +569,20 @@ std::function<void()> FunctionCallCompiler::generateDataSection(
 		};
 	} else {
 		return [pushKey, this, vars, ct, getDeclAndIndex]() {
-			std::vector<PragmaDirective const *> _pragmaDirectives;
-			PragmaDirectiveHelper pragmaHelper{_pragmaDirectives};
-			solAssert(ct, "ct == null");
-			TVMCompilerContext ctx{&ct->contractDefinition(), pragmaHelper};
+			StorageLayout const storageLayout{&ct->contractDefinition()};
 
 			std::map<VariableDeclaration const*, Expression const*> varValue;
 			if (vars != nullptr) {
-				std::vector<std::pair<VariableDeclaration const*, int>> staticVars = ctx.getStaticVariables();
+				std::vector<std::pair<VariableDeclaration const*, int>> staticVars = storageLayout.getStaticVariables();
 				auto initVars = to<InitializerList>(vars);
 				for (size_t i = 0; i < initVars->names().size(); ++i) {
 					const ASTPointer<ASTString> &name = initVars->names().at(i);
-					const auto &[varDecl, varIndex] = getDeclAndIndex(staticVars, *name);
+					const auto &[varDecl, _] = getDeclAndIndex(staticVars, *name);
 					varValue[varDecl] = initVars->options().at(i).get();
 				}
 			}
 
-			std::vector<VariableDeclaration const *> stateVars = ctx.c4StateVariables();
+			std::vector<VariableDeclaration const *> stateVars = storageLayout.usualAndUnpackedStateVariables();
 			for (VariableDeclaration const* var : stateVars | boost::adaptors::reversed) {
 				if (varValue.count(var) == 0)
 					m_pusher.pushDefaultValue(var->type());
@@ -592,20 +590,22 @@ std::function<void()> FunctionCallCompiler::generateDataSection(
 					pushExprAndConvert(varValue.at(var), var->type());
 			}
 
-			if (ctx.storeTimestampInC4())
+			if (storageLayout.storeTimestampInC4())
 				m_pusher.pushInt(0);
-			pushKey();
+			if (storageLayout.storePubkeyInC4())
+				pushKey();
 			m_pusher << "NEWC";
-			m_pusher << "STU 256";
-			if (ctx.storeTimestampInC4())
+			if (storageLayout.storePubkeyInC4())
+				m_pusher << "STU 256";
+			if (storageLayout.storeTimestampInC4())
 				m_pusher << "STU 64";
-			if (hasConstructor(ct->contractDefinition()))
+			if (storageLayout.hasConstructor())
 				m_pusher << "STSLICECONST 0"; // constructor flag
-			const std::vector<Type const *>& memberTypes = ctx.c4StateVariableTypes();
+			const std::vector<Type const *> memberTypes = getTypesFromVarDecls(stateVars);
 			if (!memberTypes.empty()) {
 				ChainDataEncoder encoder{&m_pusher};
-				DecodePositionAbiV2 position{ctx.getOffsetC4(), 0, memberTypes};
-				encoder.encodeParameters(memberTypes, position);
+				AbiV2Position position{storageLayout.getOffsetC4(), 0, memberTypes};
+				encoder.encodeParameters(memberTypes, position, false);
 			}
 			m_pusher << "ENDC";
 		};
@@ -626,6 +626,12 @@ bool FunctionCallCompiler::checkRemoteMethodCall(FunctionCall const &_functionCa
 		if (!memberAccess)
 			return false;
 
+		// function definition
+		functionDefinition = getRemoteFunctionDefinition(memberAccess);
+		if (functionDefinition == nullptr) {
+			return false;
+		}
+
 		// parse options they are stored in two vectors: names and options
 		for (const auto &option: functionOptions->names())
 			if (!isIn(*option, "stateInit", "flag", "value", "currencies", "bounce", "callback"))
@@ -637,8 +643,6 @@ bool FunctionCallCompiler::checkRemoteMethodCall(FunctionCall const &_functionCa
 				// Either StateInit ^StateInit
 				m_pusher << "STSLICECONST 1"; // ^StateInit
 				acceptExpr(stateInit);
-				m_pusher.pushS(0);
-				checkStateInit();
 				m_pusher << "STREFR";
 			};
 
@@ -662,18 +666,16 @@ bool FunctionCallCompiler::checkRemoteMethodCall(FunctionCall const &_functionCa
 			else
 				exprs[TvmConst::int_msg_info::tons] = valueExpr;
 		} else
-			constParams[TvmConst::int_msg_info::tons] = getDefaultMsgValue();
+			cast_error(_functionCall, "Explicitly define message value, e.g. f{value: 1 ton}(...)");
 
 		// remote_addr
 		exprs[TvmConst::int_msg_info::dest] = &memberAccess->expression();
 
-		// function definition
-		functionDefinition = getRemoteFunctionDefinition(memberAccess);
 
 
 		if (Expression const* callback = findOption("callback")) {
 			CallableDeclaration const* remoteFunction = getFunctionDeclarationOrConstructor(callback);
-			callbackFunctionId = ChainDataEncoder{&m_pusher}.calculateFunctionIDWithReason(
+			callbackFunctionId = ChainDataEncoder::calculateFunctionIDWithReason(
 					remoteFunction,
 					ReasonOfOutboundMessage::RemoteCallInternal
 			);
@@ -686,20 +688,34 @@ bool FunctionCallCompiler::checkRemoteMethodCall(FunctionCall const &_functionCa
 			};
 		}
 	} else {
-		constParams[TvmConst::int_msg_info::tons] = getDefaultMsgValue();
-		constParams[TvmConst::int_msg_info::bounce] = "1";
-
 		Expression const *currentExpression = &_functionCall.expression();
 
-		auto memberValue = to<MemberAccess>(currentExpression);
-		if (memberValue == nullptr) {
+		auto memberAccess = to<MemberAccess>(currentExpression);
+		if (memberAccess == nullptr) {
 			return false;
 		}
-		exprs[TvmConst::int_msg_info::dest] = &memberValue->expression();
-		functionDefinition = getRemoteFunctionDefinition(memberValue);
+
+		functionDefinition = getRemoteFunctionDefinition(memberAccess);
 		if (functionDefinition == nullptr) {
 			return false;
 		}
+		// return false;
+
+		auto contract = functionDefinition->annotation().contract;
+		if (contract && contract->isContractLibrary()) {
+			pushArgs();
+			auto [_, id] = m_pusher.ctx().functionInternalName(functionDefinition, false);
+			m_pusher.pushInt(id);
+			acceptExpr(&memberAccess->expression());
+			m_pusher.callx(m_arguments.size() + 2, functionDefinition->returnParameters().size());
+			return true;
+		}
+
+		SourceReference sr = SourceReferenceExtractor::extract(*GlobalParams::g_charStreamProvider, &m_functionCall.location());
+		// const std::string computeName = toString(sr.position.line) + "_column_" + toString(sr.position.column) + "_ast_id_" +
+										// toString(m_functionCall.id());
+		//solUnimplemented(sr.text);
+		cast_error(_functionCall, "Explicitly define message value, e.g. f{value: 1 ton}(...)");
 	}
 
 	pushArgs(true);
@@ -714,7 +730,7 @@ bool FunctionCallCompiler::checkRemoteMethodCall(FunctionCall const &_functionCa
 	appendBody = [&](int builderSize) {
 		ChainDataEncoder{&m_pusher}.createMsgBodyAndAppendToBuilder(
 			argDecl,
-			ChainDataEncoder{&m_pusher}.calculateFunctionIDWithReason(
+			ChainDataEncoder::calculateFunctionIDWithReason(
 				functionDefinition,
 				ReasonOfOutboundMessage::RemoteCallInternal,
 				isLib
@@ -729,16 +745,19 @@ bool FunctionCallCompiler::checkRemoteMethodCall(FunctionCall const &_functionCa
 	return true;
 }
 
-std::string FunctionCallCompiler::getDefaultMsgValue() {
-	const std::optional<std::vector<ASTPointer<Expression>>> expr = m_pusher.ctx().pragmaHelper().hasMsgValue();
-	if (!expr) {
-		return StrUtils::tonsToBinaryString(u256{TvmConst::Message::DefaultMsgValue});
+const FunctionDefinition* FunctionCallCompiler::getRemoteFunctionDefinition(const MemberAccess* memberAccess) {
+	auto expr = &memberAccess->expression();
+	if (isSuper(expr))
+		return nullptr;
+	auto ctype = to<ContractType>(getType(expr));
+	if (!ctype)
+		return nullptr;
+	Declaration const* decl = memberAccess->annotation().referencedDeclaration;
+	auto f = to<FunctionDefinition>(decl);
+	if (!f) {
+		cast_error(*memberAccess, "Unsupported remote function call.");
 	}
-	const auto& val = ExprUtils::constValue(*expr.value().at(0).get());
-	if (!val.has_value()) {
-		cast_error(*expr.value().at(0).get(), "Default value should be compile time expression of number type");
-	}
-	return StrUtils::tonsToBinaryString(val.value());
+	return f;
 }
 
 void FunctionCallCompiler::abiBuildIntMsg() {
@@ -794,12 +813,12 @@ void FunctionCallCompiler::abiBuildIntMsg() {
 		std::optional<uint32_t> callbackFunctionId;
 		if (needCallback) {
 			CallableDeclaration const* callback = getFunctionDeclarationOrConstructor(args.at(0).get());
-			callbackFunctionId = ChainDataEncoder{&m_pusher}.calculateFunctionIDWithReason(callback, ReasonOfOutboundMessage::RemoteCallInternal);
+			callbackFunctionId = ChainDataEncoder::calculateFunctionIDWithReason(callback, ReasonOfOutboundMessage::RemoteCallInternal);
 		}
 		std::vector<VariableDeclaration const *> params = convertArray(functionDefinition->parameters());
 		ChainDataEncoder{&m_pusher}.createMsgBodyAndAppendToBuilder(
 			params,
-			ChainDataEncoder{&m_pusher}.calculateFunctionIDWithReason(functionDefinition, ReasonOfOutboundMessage::RemoteCallInternal),
+			ChainDataEncoder::calculateFunctionIDWithReason(functionDefinition, ReasonOfOutboundMessage::RemoteCallInternal),
 			callbackFunctionId,
 			msgInfoSize,
 			true
@@ -832,8 +851,6 @@ void FunctionCallCompiler::abiBuildIntMsg() {
 			// Either StateInit ^StateInit
 			m_pusher << "STSLICECONST 1"; // ^StateInit
 			pushArgAndConvert(stateInit, "stateInit");
-			m_pusher.pushS(0);
-			checkStateInit();
 			m_pusher << "STREFR";
 		};
 	}
@@ -973,17 +990,16 @@ bool FunctionCallCompiler::checkTvmABIDeployMethods(Type::Category category) {
 					}
 				};
 				hasVars = (varArg != -1);
-				ContractType const* ct{};
-				if (hasVars) {
-					Type const* type{};
-					type = m_arguments[contrArg]->annotation().type;
+				ContractType const* contractType{};
+				if (contrArg != -1) {
+					Type const* type = m_arguments[contrArg]->annotation().type;
 					auto tt = dynamic_cast<const TypeType *>(type);
 					type = tt->actualType();
-					ct = to<ContractType>(type);
+					contractType = to<ContractType>(type);
 				}
 				exprs[StateInitMembers::Data] = generateDataSection(false, pushKey,
 																	hasVars ? m_arguments[varArg].get() : nullptr,
-																	ct);
+																	contractType);
 			}
 		}
 
@@ -1007,13 +1023,17 @@ void FunctionCallCompiler::abiDecodeData() {
 
 int FunctionCallCompiler::decodeData() {
 	std::vector<Type const*> stateVarTypes;
-	auto retTuple = to<TupleType>(m_retType);
-	for (Type const* type : retTuple->components())
-		stateVarTypes.push_back(type);
+
+	if (auto retTuple = to<TupleType>(m_retType)) {
+		for (Type const* type : retTuple->components())
+			stateVarTypes.push_back(type);
+	} else {
+		stateVarTypes.push_back(m_retType);
+	}
 
 	// lvalue.. slice
 	ChainDataDecoder decoder{&m_pusher};
-	decoder.decodeData(0, 0, stateVarTypes);
+	decoder.decodeData(0, 0, stateVarTypes, false);
 	// lvalue.. stateVars...
 	return stateVarTypes.size();
 }
@@ -1152,12 +1172,12 @@ void FunctionCallCompiler::sliceMethods(MemberAccess const &_node) {
 		if (isIn(memberName, "load", "decode")) {
 			TypePointers types = returnTypes(false);
 			ChainDataDecoder decode{&m_pusher};
-			DecodePositionFromOneSlice pos;
+			AbiPositionFromOneSlice pos;
 			decode.decodeParameters(types, pos);
 			stackDelta = types.size();
 		} else if (isIn(memberName, "loadQ", "decodeQ")) {
 			ChainDataDecoder decode{&m_pusher};
-			DecodePositionFromOneSlice pos;
+			AbiPositionFromOneSlice pos;
 			decode.decodeParametersQ(returnTypes(true), pos);
 			stackDelta = 1;
 		} else if (boost::starts_with(memberName, "load")) {
@@ -1310,20 +1330,20 @@ void FunctionCallCompiler::sliceMethods(MemberAccess const &_node) {
 		acceptExpr(&_node.expression());
 
 		ChainDataDecoder decode{&m_pusher};
-		DecodePositionFromOneSlice pos;
+		AbiPositionFromOneSlice pos;
 		decode.decodeParameters(returnTypes(false), pos);
 		m_pusher.drop();
 	} else if (memberName == "preloadQ") {
 		acceptExpr(&_node.expression());
 
 		ChainDataDecoder decode{&m_pusher};
-		DecodePositionFromOneSlice pos;
+		AbiPositionFromOneSlice pos;
 		decode.decodeParametersQ(returnTypes(true), pos);
 		m_pusher.drop();
 	} else if (memberName == "preloadRef") {
 		acceptExpr(&_node.expression());
 		if (m_arguments.empty()) {
-			m_pusher << "PLDREF";
+			m_pusher << "PLDREFIDX 0";
 		} else {
 			if (value.has_value()) {
 				m_pusher << "PLDREFIDX " + toString(value.value());
@@ -2009,8 +2029,6 @@ void FunctionCallCompiler::addressMethod() {
 				// Either StateInit ^StateInit
 				m_pusher << "STSLICECONST 1"; // ^StateInit
 				acceptExpr(expr);
-				m_pusher.pushS(0);
-				checkStateInit();
 				m_pusher << "STREFR";
 			};
 		};
@@ -2664,7 +2682,7 @@ void FunctionCallCompiler::goshFunction() {
 void FunctionCallCompiler::codeSalt() {
 	pushArgs(); // code
 	m_pusher << "CTOS"; // sliceCode
-	m_pusher << "PLDREF"; // dict
+	m_pusher << "PLDREFIDX 0"; // dict
 	m_pusher.pushInt(crc16("__codeSaltIndex")); // dict index
 	m_pusher.blockSwap(1, 1); // index dict
 	GetFromDict op{m_pusher, *TypeProvider::int_(19), *TypeProvider::tvmcell(),
@@ -2694,13 +2712,12 @@ void FunctionCallCompiler::setCodeSalt() {
 
 void FunctionCallCompiler::functionId() {
 	auto callDef = getFunctionDeclarationOrConstructor(m_arguments.at(0).get());
-	ChainDataEncoder encoder(&m_pusher);
 	uint32_t funcID;
 	if (callDef == nullptr) {
-		funcID = encoder.calculateConstructorFunctionID();
+		funcID = ChainDataEncoder::calculateConstructorFunctionID();
 	} else {
 		bool isManuallyOverridden{};
-		std::tie(funcID, isManuallyOverridden) = encoder.calculateFunctionID(callDef);
+		std::tie(funcID, isManuallyOverridden) = ChainDataEncoder::calculateFunctionID(callDef);
 		if (!isManuallyOverridden) {
 			funcID &= 0x7FFFFFFFu;
 		}
@@ -2720,18 +2737,18 @@ void FunctionCallCompiler::abiEncodeBody() {
 		std::optional<uint32_t> callbackFunctionId;
 		if (needCallback) {
 			CallableDeclaration const* callback = getFunctionDeclarationOrConstructor(m_arguments.at(1).get());
-			callbackFunctionId = ChainDataEncoder{&m_pusher}.calculateFunctionIDWithReason(callback, ReasonOfOutboundMessage::RemoteCallInternal);
+			callbackFunctionId = ChainDataEncoder::calculateFunctionIDWithReason(callback, ReasonOfOutboundMessage::RemoteCallInternal);
 		}
 		const ast_vec<VariableDeclaration> &parameters = callDef->parameters();
 		std::vector<Type const *> types = getParams(parameters).first;
-		DecodePositionAbiV2 position{32, 0, types};
+		AbiV2Position position{32, 0, types};
 		for (int i = m_arguments.size() - 1; i >= 1 + shift; --i) {
 			acceptExpr(m_arguments.at(i).get());
 		}
 		m_pusher << "NEWC";
 		ChainDataEncoder{&m_pusher}.createMsgBody(
 			convertArray(parameters),
-			ChainDataEncoder{&m_pusher}.calculateFunctionIDWithReason(callDef, ReasonOfOutboundMessage::RemoteCallInternal),
+			ChainDataEncoder::calculateFunctionIDWithReason(callDef, ReasonOfOutboundMessage::RemoteCallInternal),
 			callbackFunctionId,
 			position
 		);
@@ -2739,15 +2756,109 @@ void FunctionCallCompiler::abiEncodeBody() {
 	m_pusher << "ENDC";
 }
 
+bool FunctionCallCompiler::checkForTvmC4(const MemberAccess &_node) {
+	auto const& name = _node.memberName();
+	if (name != "unpackData" && name != "packData")
+		return false;
+
+	auto const& usualStateVars = m_pusher.ctx().storageLayout().usualStateVariables();
+	std::vector<VariableDeclaration const *> allStateVars = m_pusher.ctx().storageLayout().usualAndUnpackedStateVariables();
+	std::vector<Type const*> const& varTypes = getTypesFromVarDecls(allStateVars);
+	std::vector<bool> varNeeded(allStateVars.size());
+
+	if (name == "unpackData") {
+		std::vector<VariableDeclaration const*> expectedOrder;
+		std::set<VariableDeclaration const*> neededStateVarSet;
+		for (auto const& arg : m_arguments) {
+			auto identifier = to<Identifier>(arg.get());
+			Declaration const* declaration = identifier->annotation().referencedDeclaration;
+			auto variableDeclaration = to<VariableDeclaration>(declaration);
+			neededStateVarSet.insert(variableDeclaration);
+			expectedOrder.emplace_back(variableDeclaration);
+		}
+
+		m_pusher.getGlob(m_pusher.ctx().storageLayout().getUnpackIndex());
+		// stack: slice
+
+		std::vector<VariableDeclaration const*> stackOrder;
+		for (size_t i = 0; i < allStateVars.size(); ++i) {
+			const auto stateVar = allStateVars.at(i);
+			if (neededStateVarSet.count(stateVar)) {
+				varNeeded[i] = true;
+				stackOrder.emplace_back(stateVar);
+			}
+		}
+
+		UnpackedCoderDecoder decoder{
+			m_pusher,
+			m_pusher.ctx().storageLayout().getOffsetC4(),
+			0,
+			static_cast<int>(usualStateVars.size()),
+			varTypes,
+			varNeeded
+		};
+		decoder.unpackedData();
+		// stack: unpackedStateVars...
+
+		// set the correct order of return values
+		size_t n = expectedOrder.size();
+		for (size_t i = 0; i < expectedOrder.size(); ++i) {
+			if (*expectedOrder.at(i) != *stackOrder.at(i)) {
+				size_t j = i + 1;
+				for (; ; ++j) {
+					if (*expectedOrder.at(i) == *stackOrder.at(j)) {
+						break;
+					}
+				}
+				m_pusher.exchange(n - j - 1, n - i - 1);
+				std::swap(stackOrder.at(i), stackOrder.at(j));
+			}
+		}
+	} else if (name == "packData") {
+		std::map<int, std::function<void()> > varIndexToPush;
+		for (size_t i = 0; i < m_names.size(); ++i) {
+			int varIndex = 0;
+			for (;; ++varIndex)
+				if (allStateVars.at(varIndex)->name() == *m_names[i])
+					break;
+			varNeeded[varIndex] = true;
+			varIndexToPush[varIndex] = [this, i] {
+				pushArgAndConvert(i);
+			};
+		}
+
+		const int stackSize = m_pusher.stackSize();
+		m_pusher.getGlob(m_pusher.ctx().storageLayout().getUnpackIndex());
+		// stack: slice
+
+		UnpackedCoderDecoder decoder{
+			m_pusher,
+			m_pusher.ctx().storageLayout().getOffsetC4(),
+			0,
+			static_cast<int>(usualStateVars.size()),
+			varTypes,
+			varNeeded
+		};
+		decoder.packData(varIndexToPush);
+
+		m_pusher.setGlob(m_pusher.ctx().storageLayout().getUnpackIndex());
+		solAssert(stackSize == m_pusher.stackSize(), "stackSize == m_pusher.stackSize()");
+	} else {
+		solUnimplemented("");
+	}
+	return true;
+}
+
 bool FunctionCallCompiler::checkForTvmFunction(const MemberAccess &_node) {
-	if (_node.memberName() == "pubkey") { // tvm.pubkey
+	auto const& name = _node.memberName();
+	if (name == "pubkey") { // tvm.pubkey
 		m_pusher.getGlob(TvmConst::C7::TvmPubkey);
-	} else if (_node.memberName() == "setPubkey") { // tvm.setPubkey
+	} else if (name == "setPubkey") { // tvm.setPubkey
 		pushArgs();
 		m_pusher.setGlob(TvmConst::C7::TvmPubkey);
-	} else if (_node.memberName() == "accept") { // tvm.accept
+	} else if (name == "accept") { // tvm.accept
 		m_pusher << "ACCEPT";
-	} else if (_node.memberName() == "hash") { // tvm.hash
+	} else if (name == "hash") { // tvm.hash
 		pushArgs();
 		switch (m_arguments.at(0)->annotation().type->category()) {
 			case Type::Category::TvmCell:
@@ -2761,14 +2872,14 @@ bool FunctionCallCompiler::checkForTvmFunction(const MemberAccess &_node) {
 			default:
 				solUnimplemented("");
 		}
-	} else if (_node.memberName() == "p256CheckSign") { // tvm.p256CheckSign
+	} else if (name == "p256CheckSign") { // tvm.p256CheckSign
 		pushArgs();
 		auto pubkeyType = m_funcType->parameterTypes().at(0);
 		if (pubkeyType->category() == Type::Category::TvmSlice)
 			m_pusher << "P256_CHKSIGNS";
 		else
 			m_pusher << "P256_CHKSIGNU";
-	} else if (_node.memberName() == "checkSign") { // tvm.checkSign
+	} else if (name == "checkSign") { // tvm.checkSign
 		size_t cnt = m_arguments.size();
 		if (getType(m_arguments[0].get())->category() == Type::Category::TvmSlice) {
 			pushArgs();
@@ -2789,52 +2900,52 @@ bool FunctionCallCompiler::checkForTvmFunction(const MemberAccess &_node) {
 			pushArgAndConvert(cnt - 1);
 			m_pusher << "CHKSIGNU";
 		}
-	} else if (_node.memberName() == "setcode") { // tvm.setcode
+	} else if (name == "setcode") { // tvm.setcode
 		pushArgs();
 		m_pusher << "SETCODE";
-	} else if (_node.memberName() == "bindump") { // tvm.bindump
+	} else if (name == "bindump") { // tvm.bindump
 		pushArgs();
 		if (getType(m_arguments[0].get())->category() == Type::Category::TvmCell)
 			m_pusher << "CTOS";
 		m_pusher << "BINDUMP";
 		m_pusher.drop();
-	} else if (_node.memberName() == "hexdump") { // tvm.hexdump
+	} else if (name == "hexdump") { // tvm.hexdump
 		pushArgs();
 		if (getType(m_arguments[0].get())->category() == Type::Category::TvmCell)
 		m_pusher << "CTOS";
 		m_pusher << "HEXDUMP";
 		m_pusher.drop();
-	} else if (_node.memberName() == "setCurrentCode") { // tvm.setCurrentCode
+	} else if (name == "setCurrentCode") { // tvm.setCurrentCode
 		const int stackSize = m_pusher.stackSize();
 		pushArgs();
 		m_pusher << "CTOS";
 		m_pusher << "BLESS";
 		m_pusher.popC3();
 		solAssert(stackSize == m_pusher.stackSize(), "");
-	} else if (_node.memberName() == "getData") { // tvm.getData
+	} else if (name == "getData") { // tvm.getData
 		m_pusher.pushRoot();
-	} else if (_node.memberName() == "setData") { // tvm.setData
+	} else if (name == "setData") { // tvm.setData
 		pushArgs();
 		m_pusher.popRoot();
-	} else if (_node.memberName() == "rawCommit") { // tvm.rawCommit
+	} else if (name == "rawCommit") { // tvm.rawCommit
 		m_pusher << "COMMIT";
-	} else if (_node.memberName() == "commit") { // tvm.commit
+	} else if (name == "commit") { // tvm.commit
 		m_pusher.pushFragmentInCallRef(0, 0, "c7_to_c4");
 		m_pusher << "COMMIT";
-	} else if (_node.memberName() == "log") { // tvm.log
+	} else if (name == "log") { // tvm.log
 		compileLog();
-	} else if (_node.memberName() == "resetStorage") { //tvm.resetStorage
+	} else if (name == "resetStorage") { //tvm.resetStorage
 		m_pusher.resetAllStateVars();
-	} else if (_node.memberName() == "functionId") { // tvm.functionId
+	} else if (name == "functionId") { // tvm.functionId
 		functionId();
-	} else if (_node.memberName() == "encodeBody") { // tvm.encodeBody
+	} else if (name == "encodeBody") { // tvm.encodeBody
 		abiEncodeBody();
-	} else if (_node.memberName() == "rawReserve") {
+	} else if (name == "rawReserve") {
 		pushArgs();
 		int n = m_arguments.size();
 		solAssert(isIn(n, 2, 3), "");
 		m_pusher << (n == 2 ? "RAWRESERVE" : "RAWRESERVEX");
-	} else if (isIn(_node.memberName(), "exit", "exit1")) {
+	} else if (isIn(name, "exit", "exit1")) {
 		m_pusher.was_c4_to_c7_called();
 		m_pusher.fixStack(-1); // fix stack
 
@@ -2843,33 +2954,37 @@ bool FunctionCallCompiler::checkForTvmFunction(const MemberAccess &_node) {
 		m_pusher.endContinuationFromRef();
 		m_pusher.ifNot();
 
-		if (_node.memberName() == "exit")
+		if (name == "exit")
 			m_pusher._throw("THROW 0");
 		else
 			m_pusher._throw("THROW 1");
-	} else if (_node.memberName() == "code") {
+	} else if (name == "code") {
 		m_pusher << "MYCODE";
-	} else if (_node.memberName() == "codeSalt") {
+	} else if (name == "codeSalt") {
 		codeSalt();
-	} else if (_node.memberName() == "setCodeSalt") {
+	} else if (name == "setCodeSalt") {
 		setCodeSalt();
-	} else if (_node.memberName() == "replayProtTime") {
+	} else if (name == "replayProtectionValue") {
 		m_pusher.getGlob(TvmConst::C7::ReplayProtTime);
-	} else if (_node.memberName() == "setReplayProtTime") {
+	} else if (name == "setReplayProtectionValue") {
 		pushArgs();
 		m_pusher.setGlob(TvmConst::C7::ReplayProtTime);
-	} else if (_node.memberName() == "replayProtInterval") {
+	} else if (name == "replayProtInterval") {
 		m_pusher.pushInt(TvmConst::Message::ReplayProtection::Interval);
-	} else if (_node.memberName() == "setGasLimit") {
+	} else if (name == "setGasLimit") {
 		pushArgs();
 		m_pusher << "SETGASLIMIT";
-	} else if (_node.memberName() == "initCodeHash") {
+	} else if (name == "initCodeHash") {
 		m_pusher << "INITCODEHASH";
-	} else if (_node.memberName() == "buyGas") {
+	} else if (name == "buyGas") {
 		pushArgs();
 		m_pusher << "BUYGAS";
-	} else if (_node.memberName() == "duePayment") {
+	} else if (name == "duePayment") {
 		m_pusher << "DUEPAYMENT";
+	} else if (name == "loadLibrary") {
+		pushArgs();
+		TypeConversion tc{m_pusher};
+		tc.convertIntegerToLibraryExoticCell();
 	} else {
 		return false;
 	}
@@ -2883,14 +2998,14 @@ void FunctionCallCompiler::abiFunction() {
 		for (ASTPointer<Expression const> const& arg : m_arguments) {
 			types.emplace_back(arg->annotation().type->mobileType());
 		}
-		DecodePositionAbiV2 position{0, 0, types};
+		AbiV2Position position{0, 0, types};
 
 		for (ASTPointer<Expression const> const& arg : m_arguments | boost::adaptors::reversed) {
 			acceptExpr(arg.get());
 		}
 		m_pusher << "NEWC";
 		ChainDataEncoder encoder{&m_pusher};
-		encoder.encodeParameters(types, position);
+		encoder.encodeParameters(types, position, false);
 		m_pusher << "ENDC";
 		break;
 	}
@@ -2912,7 +3027,7 @@ void FunctionCallCompiler::abiFunction() {
 		acceptExpr(m_arguments.at(0).get());
 		m_pusher << "CTOS";
 		ChainDataDecoder decoder{&m_pusher};
-		decoder.decodeData(0, 0, types);
+		decoder.decodeData(0, 0, types, false);
 		break;
 	}
 	case FunctionType::Kind::ABICodeSalt: {
@@ -3601,7 +3716,7 @@ bool FunctionCallCompiler::createNewContract() {
 		if (constructor)
 			ChainDataEncoder{&m_pusher}.createMsgBodyAndAppendToBuilder(
 				convertArray(constructor->parameters()),
-				ChainDataEncoder{&m_pusher}.calculateFunctionIDWithReason(constructor, ReasonOfOutboundMessage::RemoteCallInternal),
+				ChainDataEncoder::calculateFunctionIDWithReason(constructor, ReasonOfOutboundMessage::RemoteCallInternal),
 				{},
 				builderSize,
 				true
@@ -3687,8 +3802,6 @@ void FunctionCallCompiler::deployNewContract(
 
 	std::function<void()> appendStateInit = [&]() {
 		m_pusher.stones(1); // stateInit builder
-		m_pusher.pushS(1);
-		checkStateInit();
 		m_pusher << "STREF";
 	};
 
@@ -3710,7 +3823,7 @@ void FunctionCallCompiler::deployNewContract(
 	// stack: destAddress
 }
 
-void FunctionCallCompiler::checkStateInit() {
+void FunctionCallCompiler::checkStateInit() const {
 	// _ split_depth:(Maybe (## 5)) special:(Maybe TickTock)
 	//  code:(Maybe ^Cell) data:(Maybe ^Cell)
 	//  library:(HashmapE 256 SimpleLib) = StateInit;
@@ -3957,7 +4070,7 @@ Expression const* FunctionCallCompiler::findOption(const std::string& name) {
 	if (!functionOptions)
 		return {};
 	std::vector<ASTPointer<ASTString>> const &optionNames = functionOptions->names();
-	auto iter = find_if(optionNames.begin(), optionNames.end(), [&](auto el) { return *el == name; });
+	auto iter = find_if(optionNames.begin(), optionNames.end(), [&](auto const& el) { return *el == name; });
 	if (iter == optionNames.end())
 		return {};
 	size_t index = iter - optionNames.begin();

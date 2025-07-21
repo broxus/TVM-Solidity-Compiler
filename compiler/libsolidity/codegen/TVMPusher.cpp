@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2024 EverX. All Rights Reserved.
+ * Copyright (C) 2020-2025 EverX. All Rights Reserved.
  *
  * Licensed under the  terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License.
@@ -59,46 +59,6 @@ void StackPusher::pushLog() {
 	*this << "CTOS";
 	*this << "STRDUMP";
 	drop();
-}
-
-// TODO move to function compiler
-Pointer<Function> StackPusher::generateC7ToC4() {
-	const std::vector<Type const *>& memberTypes = m_ctx->c4StateVariableTypes();
-	const int stateVarQty = memberTypes.size();
-	if (ctx().tooMuchStateVariables()) {
-		const int saveStack = stackSize();
-		pushC7();
-		*this << "FALSE";
-		setIndexQ(stateVarQty + TvmConst::C7::FirstIndexForVariables);
-		unpackFirst(stateVarQty + TvmConst::C7::FirstIndexForVariables);
-		reverse(stateVarQty + TvmConst::C7::FirstIndexForVariables, 0);
-		drop(TvmConst::C7::FirstIndexForVariables);
-		solAssert(saveStack + stateVarQty == stackSize(), "");
-	} else {
-		for (int i = stateVarQty - 1; i >= 0; --i)
-			getGlob(TvmConst::C7::FirstIndexForVariables + i);
-	}
-	if (ctx().storeTimestampInC4())
-		getGlob(TvmConst::C7::ReplayProtTime);
-	getGlob(TvmConst::C7::TvmPubkey);
-	*this << "NEWC";
-	*this << "STU 256";
-	if (ctx().storeTimestampInC4()) {
-		*this << "STU 64";
-	}
-	if (ctx().hasConstructor())
-		*this << "STSLICECONST 1"; // constructor flag
-	if (!memberTypes.empty()) {
-		ChainDataEncoder encoder{this};
-		DecodePositionAbiV2 position{m_ctx->getOffsetC4(), 0, memberTypes};
-		encoder.encodeParameters(memberTypes, position);
-	}
-
-	*this << "ENDC";
-	popRoot();
-	Pointer<CodeBlock> block = getBlock();
-	auto f = createNode<Function>(0, 0, "c7_to_c4", nullopt, Function::FunctionType::Fragment, block);
-	return f;
 }
 
 bool StackPusher::doesFitInOneCellAndHaveNoStruct(Type const* key, Type const* value) {
@@ -326,7 +286,7 @@ void StackPusher::recoverKeyAndValueAfterDictOperation(
 				if (didUseOpcodeWithRef) {
 					*this << "CTOS";
 				} else if (doesDictStoreValueInRef(keyType, valueType)) {
-					*this << "PLDREF";
+					*this << "PLDREFIDX 0";
 					*this << "CTOS";
 				}
 				break;
@@ -334,7 +294,7 @@ void StackPusher::recoverKeyAndValueAfterDictOperation(
 			case DictValueType::Array:
 				if (isByteArrayOrString(valueType)) {
 					if (!didUseOpcodeWithRef) {
-						*this << "PLDREF";
+						*this << "PLDREFIDX 0";
 					}
 					break;
 				}
@@ -355,7 +315,7 @@ void StackPusher::recoverKeyAndValueAfterDictOperation(
 					*this << "CTOS";
 					pushCallRef = true;
 				} else if (doesDictStoreValueInRef(keyType, valueType)) {
-					*this << "PLDREF";
+					*this << "PLDREFIDX 0";
 					*this << "CTOS";
 					pushCallRef = true;
 				}
@@ -372,7 +332,7 @@ void StackPusher::recoverKeyAndValueAfterDictOperation(
 			case DictValueType::TvmCell:
 			{
 				if (!didUseOpcodeWithRef) {
-					*this << "PLDREF";
+					*this << "PLDREFIDX 0";
 				}
 				break;
 			}
@@ -522,7 +482,7 @@ int StackPusher::stackSize() const {
 	return m_stack.size();
 }
 
-void StackPusher::ensureSize(int savedStackSize, const string &location, const ASTNode* node) {
+void StackPusher::ensureSize(int savedStackSize, const string &location, const ASTNode* node) const {
 	if (lockStack == 0) {
 		m_stack.ensureSize(savedStackSize, location, node);
 	}
@@ -941,34 +901,64 @@ void StackPusher::pushStackOpcode(const std::string& name, int take, int ret) {
 }
 
 void StackPusher::resetAllStateVars() {
-	std::vector<VariableDeclaration const *> const stateVariables = ctx().c4StateVariables();
-	std::vector<VariableDeclaration const *> const nostorageStateVariables = ctx().nostorageStateVars();
-	if (m_ctx->tooMuchStateVariables()) {
+	std::vector<VariableDeclaration const *> const usualStateVars = ctx().storageLayout().usualStateVariables();
+	std::vector<VariableDeclaration const *> const unpackedStateVars = ctx().storageLayout().unpackedStateVariables();
+	std::vector<Type const *> const allTypes = getTypesFromVarDecls(ctx().storageLayout().usualAndUnpackedStateVariables());
+	std::vector<VariableDeclaration const *> const nostorageStateVariables = ctx().storageLayout().nostorageStateVars();
+
+	auto getDefaultUnpackedStateVars = [&]() {
+		const int startSize = getStack().size();
+		AbiV2Position position{ctx().storageLayout().getOffsetC4(), 0, allTypes};
+
+		for (VariableDeclaration const *variable: unpackedStateVars | boost::adaptors::reversed)
+			pushDefaultValue(variable->type());
+		*this << "NEWC";
+
+		position.skipTypes(getTypesFromVarDecls(usualStateVars));
+		ChainDataEncoder encode{this};
+		encode.encodeParameters(getTypesFromVarDecls(unpackedStateVars), position, false);
+		*this << "ENDC";
+		*this << "CTOS";
+		getStack().ensureSize(startSize + 1);
+	};
+
+	if (m_ctx->storageLayout().tooMuchStateVariables()) {
 		pushC7();
 		*this << "FALSE";
 		setIndexQ(TvmConst::C7::FirstIndexForVariables);
 		unpackFirst(TvmConst::C7::FirstIndexForVariables);
-		for (VariableDeclaration const *variable: stateVariables)
+		for (VariableDeclaration const *variable: usualStateVars)
 			pushDefaultValue(variable->type());
+		if (!unpackedStateVars.empty())
+			getDefaultUnpackedStateVars();
 		for (VariableDeclaration const *variable: nostorageStateVariables)
 			pushDefaultValue(variable->type());
-		const int stateVarQty = stateVariables.size() + nostorageStateVariables.size();
+		const int stateVarQty =
+			usualStateVars.size() +
+			(unpackedStateVars.empty() ? 0 : 1) +
+			nostorageStateVariables.size();
 		makeTuple(TvmConst::C7::FirstIndexForVariables + stateVarQty);
 		popC7();
 	} else {
-		for (VariableDeclaration const *variable: stateVariables)
+		for (VariableDeclaration const *variable: usualStateVars)
 			pushDefaultValue(variable->type());
 		for (VariableDeclaration const *variable: nostorageStateVariables)
 			pushDefaultValue(variable->type());
+
 		for (VariableDeclaration const *variable: nostorageStateVariables | boost::adaptors::reversed)
 			setGlob(variable);
-		for (VariableDeclaration const *variable: stateVariables | boost::adaptors::reversed)
+		for (VariableDeclaration const *variable: usualStateVars | boost::adaptors::reversed)
 			setGlob(variable);
+
+		if (!unpackedStateVars.empty()) {
+			getDefaultUnpackedStateVars();
+			setGlob(ctx().storageLayout().getUnpackIndex());
+		}
 	}
 }
 
 void StackPusher::getGlob(VariableDeclaration const *vd) {
-	const int index = ctx().getStateVarIndex(vd);
+	const int index = ctx().storageLayout().getStateVarIndex(vd);
 	getGlob(index);
 }
 
@@ -1030,7 +1020,7 @@ void StackPusher::setGlob(int index) {
 }
 
 void StackPusher::setGlob(VariableDeclaration const *vd) {
-	const int index = ctx().getStateVarIndex(vd);
+	const int index = ctx().storageLayout().getStateVarIndex(vd);
 	solAssert(index >= 0, "");
 	setGlob(index);
 }
@@ -1208,13 +1198,13 @@ bool StackPusher::fastLoad(const Type* type) {
 	// false => slice value
 }
 
-void StackPusher::load(const Type *type, bool reverseOrder) {
+void StackPusher::load(const Type *type, bool dataOnTop) {
 	// slice
 	bool directOrder = fastLoad(type);
-	if (directOrder == reverseOrder) {
+	if (directOrder == dataOnTop) {
 		exchange(1);
 	}
-	// reverseOrder? slice member : member slice
+	// dataOnTop? slice member : member slice
 }
 
 void StackPusher::preload(const Type *type) {
@@ -1256,7 +1246,7 @@ void StackPusher::preload(const Type *type) {
 	case Type::Category::Array: {
 		auto arrayType = to<ArrayType>(type);
 		if (arrayType->isByteArrayOrString()) {
-			*this << "PLDREF";
+			*this << "PLDREFIDX 0";
 		} else {
 			*this << "LDU 32";
 			*this << "PLDDICT";
@@ -2081,8 +2071,9 @@ int TVMStack::getOffset(int stackSize) const {
 }
 
 int TVMStack::getStackSize(Declaration const *name) const {
-	for (int i = m_size - 1; i >= 0; --i) {
-		if (i < static_cast<int>(m_stackSize.size()) && m_stackSize.at(i) == name) {
+	int size = std::min<int>(m_stackSize.size(), m_size);
+	for (int i = size - 1; i >= 0; --i) {
+		if (m_stackSize.at(i) == name) {
 			return i;
 		}
 	}
@@ -2162,55 +2153,114 @@ bool FunctionCallGraph::dfs(std::string const& v) {
 	return false;
 }
 
-void TVMCompilerContext::initMembers(ContractDefinition const *contract) {
-	solAssert(!m_contract, "");
-	m_contract = contract;
-
-	ignoreIntOverflow = m_pragmaHelper.hasIgnoreIntOverflow();
-	auto const c4StateVars = c4StateVariables();
+StorageLayout::StorageLayout(ContractDefinition const *contract) : m_contract(contract) {
+	auto const c4StateVars = usualStateVariables();
 	for (VariableDeclaration const *variable : c4StateVars) {
 		int index = TvmConst::C7::FirstIndexForVariables + m_stateVarIndex.size();
 		m_stateVarIndex[variable] = index;
 	}
+	const auto& unpackedStateVars = unpackedStateVariables();
 	for (VariableDeclaration const *variable : nostorageStateVars()) {
-		int index = TvmConst::C7::FirstIndexForVariables + m_stateVarIndex.size();
+		int index = TvmConst::C7::FirstIndexForVariables + m_stateVarIndex.size() + (unpackedStateVars.empty() ? 0 : 1);
 		m_stateVarIndex[variable] = index;
 	}
 }
 
-TVMCompilerContext::TVMCompilerContext(ContractDefinition const *contract, PragmaDirectiveHelper const &pragmaHelper) :
-	m_pragmaHelper{pragmaHelper},
-	m_usage{*contract},
-	m_inherHelper{contract}
-{
-	m_isUncheckedBlock.push(false);
-	initMembers(contract);
-}
-
-int TVMCompilerContext::getStateVarIndex(VariableDeclaration const *variable) const {
+int StorageLayout::getStateVarIndex(VariableDeclaration const *variable) const {
 	return m_stateVarIndex.at(variable);
 }
 
-std::vector<VariableDeclaration const *> TVMCompilerContext::c4StateVariables() const {
-	return ::stateVariables(getContract(), false);
-}
-
-std::vector<VariableDeclaration const *> TVMCompilerContext::nostorageStateVars() const {
-	return ::stateVariables(getContract(), true);
-}
-
-bool TVMCompilerContext::tooMuchStateVariables() const {
-	return c4StateVariables().size() + nostorageStateVars().size() >= TvmConst::C7::FirstIndexForVariables + 6;
-}
-
-std::vector<Type const *> TVMCompilerContext::c4StateVariableTypes() const {
+std::vector<Type const *> StorageLayout::getC4Types() const {
 	std::vector<Type const *> types;
-	for (VariableDeclaration const * var : c4StateVariables()) {
-		types.emplace_back(var->type());
-	}
+	if (storePubkeyInC4())
+		types.emplace_back(TypeProvider::uint256());
+	if (storeTimestampInC4())
+		types.emplace_back(TypeProvider::uint(64));
+	if (hasConstructor())
+		types.emplace_back(TypeProvider::boolean());
+
+	auto declStateVars = usualAndUnpackedStateVariables();
+	auto stateVarsTypes = getTypesFromVarDecls(declStateVars);
+	types.insert(types.end(), stateVarsTypes.begin(), stateVarsTypes.end());
 	return types;
 }
 
+std::vector<VariableDeclaration const *> StorageLayout::usualAndUnpackedStateVariables() const {
+	auto stateVars = ::stateVariables(m_contract, StateVarType::Usual);
+	auto unpacked = ::stateVariables(m_contract, StateVarType::Unpacked);
+	stateVars.insert(stateVars.end(), unpacked.begin(), unpacked.end());
+	return stateVars;
+}
+
+std::vector<VariableDeclaration const *> StorageLayout::usualStateVariables() const {
+	return ::stateVariables(m_contract, StateVarType::Usual);
+}
+
+std::vector<VariableDeclaration const *> StorageLayout::unpackedStateVariables() const {
+	return ::stateVariables(m_contract, StateVarType::Unpacked);
+}
+
+std::vector<VariableDeclaration const *> StorageLayout::nostorageStateVars() const {
+	return ::stateVariables(m_contract, StateVarType::NoStorage);
+}
+
+bool StorageLayout::tooMuchStateVariables() const {
+	return usualStateVariables().size() +
+		(unpackedStateVariables().empty() ? 0 : 1) +
+		nostorageStateVars().size() >= TvmConst::C7::FirstIndexForVariables + 6;
+}
+
+FunctionDefinition const* StorageLayout::hasConstructor() const {
+	for (ContractDefinition const* c : getContractsChain(m_contract)) {
+		for (const auto f : c->definedFunctions()) {
+			if (f->isConstructor())
+				return f;
+		}
+	}
+	return nullptr;
+}
+
+bool StorageLayout::storePubkeyInC4() const {
+	return m_contract->externalMsgHeaders() != nullptr;
+}
+
+bool StorageLayout::storeTimestampInC4() const {
+	return m_contract->externalMsgHeaders() && m_contract->externalMsgHeaders()->hasTime();
+}
+
+int StorageLayout::getOffsetC4() const {
+	return
+		(storePubkeyInC4() ? 256 : 0) + // pubkey
+		(storeTimestampInC4() ? 64 : 0) +
+		(hasConstructor() ? 1 : 0); // constructor flag
+}
+
+std::vector<std::pair<VariableDeclaration const*, int>> StorageLayout::getStaticVariables() const {
+	int shift = 0;
+	std::vector<std::pair<VariableDeclaration const*, int>> res;
+	for (VariableDeclaration const* v : usualAndUnpackedStateVariables()) {
+		if (v->isStatic()) {
+			res.emplace_back(v, TvmConst::C4::PersistenceMembersStartIndex + shift++);
+		}
+	}
+	return res;
+}
+
+int StorageLayout::getUnpackIndex() const {
+	return TvmConst::C7::FirstIndexForVariables + usualStateVariables().size();
+}
+
+TVMCompilerContext::TVMCompilerContext(ContractDefinition const *contract, PragmaDirectiveHelper const &pragmaHelper) :
+	m_contract{contract},
+	m_pragmaHelper{pragmaHelper},
+	m_usage{*contract},
+	m_inherHelper{contract},
+	m_storageLayout{contract}
+{
+	solAssert(m_contract, "");
+	m_isUncheckedBlock.push(false);
+	ignoreIntOverflow = m_pragmaHelper.hasIgnoreIntOverflow();
+}
 PragmaDirectiveHelper const &TVMCompilerContext::pragmaHelper() const {
 	return m_pragmaHelper;
 }
@@ -2264,48 +2314,9 @@ const ContractDefinition *TVMCompilerContext::getContract() const {
 	return m_contract;
 }
 
-bool TVMCompilerContext::hasConstructor() const {
-	return ::hasConstructor(*getContract());
-}
-
 bool TVMCompilerContext::ignoreIntegerOverflow() const {
 	solAssert(!m_isUncheckedBlock.empty(), "");
 	return ignoreIntOverflow || m_isUncheckedBlock.top();
-}
-
-FunctionDefinition const *TVMCompilerContext::afterSignatureCheck() const {
-	FunctionDefinition const *res = {};
-	for (ContractDefinition const* c : m_contract->annotation().linearizedBaseContracts) {
-		for (FunctionDefinition const *f: c->definedFunctions()) {
-			if (f->name() == "afterSignatureCheck") {
-				solAssert(res == nullptr, "");
-				res = f;
-			}
-		}
-	}
-	return res;
-}
-
-bool TVMCompilerContext::storeTimestampInC4() const {
-	return m_pragmaHelper.hasTime() && afterSignatureCheck() == nullptr;
-}
-
-int TVMCompilerContext::getOffsetC4() const {
-	return
-		256 + // pubkey
-		(storeTimestampInC4() ? 64 : 0) +
-		(hasConstructor() ? 1 : 0); // constructor flag
-}
-
-std::vector<std::pair<VariableDeclaration const*, int>> TVMCompilerContext::getStaticVariables() const {
-	int shift = 0;
-	std::vector<std::pair<VariableDeclaration const*, int>> res;
-	for (VariableDeclaration const* v : c4StateVariables()) {
-		if (v->isStatic()) {
-			res.emplace_back(v, TvmConst::C4::PersistenceMembersStartIndex + shift++);
-		}
-	}
-	return res;
 }
 
 void TVMCompilerContext::addInlineFunction(const std::string& name, Pointer<CodeBlock> body) {
@@ -2317,13 +2328,36 @@ Pointer<CodeBlock> TVMCompilerContext::getInlinedFunction(const std::string& nam
 	return m_inlinedFunctions.at(name);
 }
 
-void TVMCompilerContext::addPublicFunction(uint32_t functionId, const std::string& functionName) {
-	m_publicFunctions.emplace_back(functionId, functionName);
+void TVMCompilerContext::addPublicFunction(
+	FunctionDefinition const* function,
+	uint32_t functionId,
+	const std::string& functionName
+) {
+	if (function->isExternalMsg() && function->isInternalMsg()) {
+		addIntPublicFunction(functionId, functionName);
+		addExtPublicFunction(functionId, functionName);
+	} else if (function->isExternalMsg())
+		addExtPublicFunction(functionId, functionName);
+	else
+		addIntPublicFunction(functionId, functionName);
 }
 
-const std::vector<std::pair<uint32_t, std::string>>& TVMCompilerContext::getPublicFunctions() {
-	std::sort(m_publicFunctions.begin(), m_publicFunctions.end());
-	return m_publicFunctions;
+void TVMCompilerContext::addExtPublicFunction(uint32_t functionId, const std::string& functionName) {
+	m_extPublicFunctions.emplace_back(functionId, functionName);
+}
+
+void TVMCompilerContext::addIntPublicFunction(uint32_t functionId, const std::string& functionName) {
+	m_intPublicFunctions.emplace_back(functionId, functionName);
+}
+
+const std::vector<std::pair<uint32_t, std::string>>& TVMCompilerContext::getExtPublicFunctions() {
+	std::sort(m_extPublicFunctions.begin(), m_extPublicFunctions.end());
+	return m_extPublicFunctions;
+}
+
+const std::vector<std::pair<uint32_t, std::string>>& TVMCompilerContext::getIntPublicFunctions() {
+	std::sort(m_intPublicFunctions.begin(), m_intPublicFunctions.end());
+	return m_intPublicFunctions;
 }
 
 bool TVMCompilerContext::isBaseFunction(CallableDeclaration const* d) const {
@@ -2456,7 +2490,14 @@ void StackPusher::byteLengthOfCell() {
 }
 
 void StackPusher::was_c4_to_c7_called() {
-	getGlob(TvmConst::C7::TvmPubkey);
+	int index = -1;
+	if (ctx().storageLayout().storePubkeyInC4()) {
+		index = TvmConst::C7::TvmPubkey;
+	} else {
+		solAssert(!ctx().storageLayout().usualAndUnpackedStateVariables().empty(), "");
+		index = TvmConst::C7::FirstIndexForVariables;
+	}
+	getGlob(index);
 	*this << "ISNULL";
 }
 
@@ -2547,6 +2588,9 @@ void TypeConversion::convert(Type const* leftType, Type const* rightType) {
 	case Type::Category::StringLiteral:
 		fromStringLiteral(leftType, to<StringLiteralType>(rightType));
 		break;
+	case Type::Category::TvmCell:
+		fromCell(leftType);
+		break;
 	case Type::Category::Address:
 	case Type::Category::AddressStd:
 	case Type::Category::Bool:
@@ -2561,7 +2605,6 @@ void TypeConversion::convert(Type const* leftType, Type const* rightType) {
 	case Type::Category::Struct:
 	case Type::Category::TVMNaN:
 	case Type::Category::TvmBuilder:
-	case Type::Category::TvmCell:
 	case Type::Category::TvmStack:
 	case Type::Category::TvmVector:
 	case Type::Category::UserDefinedValueType:
@@ -2724,6 +2767,21 @@ void TypeConversion::convertIntegerToAddress(Type const* t) const {
 	}
 }
 
+void TypeConversion::convertIntegerToLibraryContinuation() const {
+	convertIntegerToLibraryExoticCell();
+	m_pusher << "CTOS";
+	m_pusher << "BLESS";
+}
+
+void TypeConversion::convertIntegerToLibraryExoticCell() const {
+	m_pusher << "PUSHINT 2"; // cell type: library
+	m_pusher << "NEWC";
+	m_pusher << "STU 8";
+	m_pusher << "STU 256"; // library hash
+	m_pusher << "TRUE";
+	m_pusher << "ENDXC";
+}
+
 void TypeConversion::convertIntegerToEnum(EnumType const* leftType, IntegerType const* /*rightType*/) const {
 	int const size = leftType->enumDefinition().members().size();
 	m_pusher.pushInt(size);
@@ -2753,9 +2811,15 @@ void TypeConversion::fromInteger(Type const* leftType, IntegerType const* rightT
 		break;
 	case Type::Category::Address:
 	case Type::Category::AddressStd:
-	case Type::Category::Contract:
-		convertIntegerToAddress(rightType);
+	case Type::Category::Contract: {
+		auto leftContract = to<ContractType>(leftType);
+		if (leftContract && leftContract->contractDefinition().isContractLibrary()) {
+			convertIntegerToLibraryContinuation();
+		} else {
+			convertIntegerToAddress(rightType);
+		}
 		break;
+	}
 	case Type::Category::Enum:
 		convertIntegerToEnum(to<EnumType>(leftType), rightType);
 		break;
@@ -2944,6 +3008,23 @@ void TypeConversion::fromStringLiteral(Type const* leftType, StringLiteralType c
 	case Type::Category::TvmSlice:
 		m_pusher.drop();
 		m_pusher.pushSlice("x" + rightType->value());
+		break;
+	default:
+		solUnimplemented(leftType->toString());
+		break;
+	}
+}
+
+void TypeConversion::fromCell(Type const* leftType) const {
+	switch (leftType->category()) {
+	case Type::Category::Contract: {
+		auto contractType = to<ContractType>(leftType);
+		solAssert(contractType->contractDefinition().isContractLibrary(), "");
+		m_pusher << "CTOS";
+		m_pusher << "BLESS";
+		break;
+	}
+	case Type::Category::TvmCell:
 		break;
 	default:
 		solUnimplemented(leftType->toString());

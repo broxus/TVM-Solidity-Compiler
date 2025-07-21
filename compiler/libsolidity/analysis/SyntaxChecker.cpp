@@ -178,21 +178,7 @@ bool SyntaxChecker::visit(PragmaDirective const& _pragma)
 	}
 	else if (_pragma.literals()[0] == "AbiHeader")
 	{
-		const std::string base = "Correct format: pragma AbiHeader [pubkey|expire|notime]";
-		if (_pragma.literals().size() != 2) {
-			auto err = "Empty pragma. " + base;
-			m_errorReporter.syntaxError(1112_error, _pragma.location(), err);
-		} else {
-			auto literal = _pragma.literals()[1];
-			if (literal != "pubkey" && literal != "expire" && literal != "notime") {
-				auto err = "Unknown pragma \""+ literal + "\". " + base;
-				if (literal == "time") {
-					err += "\nNote: timestamp in header of external message "
-							"is on by default, so delete this pragma.";
-				}
-				m_errorReporter.syntaxError(2632_error, _pragma.location(), err);
-			}
-		}
+		m_errorReporter.syntaxError(2632_error, _pragma.location(), "It's deprecated. Use attribute \"ExternalMessage\"");
 	}
 	else if (_pragma.literals()[0] == "upgrade")
     {
@@ -203,16 +189,6 @@ bool SyntaxChecker::visit(PragmaDirective const& _pragma)
 	else if (_pragma.literals()[0] == "ignoreIntOverflow")
 	{
 		return true;
-	}
-	else if (_pragma.literals()[0] == "msgValue")
-	{
-		if (m_msgValuePragmaFound) {
-			m_errorReporter.syntaxError(2995_error, _pragma.location(), "msgValue pragma shouldn't be specified more than once.");
-		}
-		if (_pragma.parameter().empty()) {
-			m_errorReporter.syntaxError(6562_error, _pragma.location(), "Correct format: pragma msgValue <value_in_nanoevers>");
-		}
-		m_msgValuePragmaFound = true;
 	}
 	else if (_pragma.literals()[0] == "copyleft")
 	{

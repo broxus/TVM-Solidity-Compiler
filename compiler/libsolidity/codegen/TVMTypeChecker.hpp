@@ -23,8 +23,8 @@ public:
 	explicit TVMTypeChecker(langutil::ErrorReporter& _errorReporter);
 
 private:
-	void checkOverrideAndOverload();
-	void check_onCodeUpgrade(FunctionDefinition const& f);
+	void checkOverrideAndOverload() const;
+	void check_onCodeUpgrade(FunctionDefinition const& f) const;
 
 public:
 	bool visit(TryStatement const& _node) override;
@@ -33,7 +33,7 @@ public:
 	bool visit(FunctionDefinition const& fc) override;
 	bool visit(ContractDefinition const& ) override;
 	bool visit(IndexRangeAccess const& ) override;
-	void checkDeprecation(FunctionCall const& _functionCall);
+	void checkDeprecation(FunctionCall const& _functionCall) const;
 	void checkSupport(FunctionCall const& _functionCall) const;
 	bool visit(FunctionCall const& ) override;
 	bool visit(PragmaDirective const& ) override;
@@ -41,7 +41,7 @@ public:
 	bool visit(FunctionCallOptions const& _node) override;
 	void endVisit(ContractDefinition const&) override;
 
-	void checkMainContract(ContractDefinition const *_mainContract, PragmaDirectiveHelper const& pragmaHelper);
+	void checkMainContract(ContractDefinition const *_mainContract, PragmaDirectiveHelper const& pragmaHelper) const;
 
 private:
 	std::unique_ptr<InherHelper> m_inherHelper;

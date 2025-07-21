@@ -148,8 +148,8 @@ void StructCompiler::tupleToBuilder() {
 	*pusher << "NEWC";
 
 	ChainDataEncoder encoder{pusher};
-	DecodePositionAbiV2 position{0, 0, m_types};
-	encoder.encodeParameters(m_types, position);
+	AbiV2Position position{0, 0, m_types};
+	encoder.encodeParameters(m_types, position, false);
 	pusher->pushRefContAndCallX(1, 1, false);
 	// stack: builder
 	const int curSize = pusher->stackSize();
@@ -161,7 +161,7 @@ void StructCompiler::convertSliceToTuple() {
 	const int ss = pusher->stackSize();
 
 	ChainDataDecoder decoder{pusher};
-	decoder.decodeData(0, 0, m_types);
+	decoder.decodeData(0, 0, m_types, false);
 	pusher->makeTuple(m_types.size());
 
 	solAssert(ss == pusher->stackSize(), "");

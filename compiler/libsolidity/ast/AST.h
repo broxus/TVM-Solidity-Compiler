@@ -493,6 +493,64 @@ protected:
 
 /// @}
 
+class ReplayProtection: public ASTNode
+{
+public:
+	enum class ReplayProtectionType {
+		TimeReplayProt,
+		SeqnoReplayProt,
+		CustomReplayProt
+	};
+
+	ReplayProtection(
+		int64_t _id,
+		SourceLocation const& _location,
+		ReplayProtectionType _categoty
+	):
+		ASTNode(_id, _location),
+		m_type(_categoty)
+	{
+	}
+
+	void accept(ASTVisitor& _visitor) override;
+	void accept(ASTConstVisitor& _visitor) const override;
+
+	ReplayProtectionType type() const { return m_type; }
+
+private:
+	ReplayProtectionType m_type;
+};
+
+class ExternalMsgHeaders: public ASTNode
+{
+public:
+	ExternalMsgHeaders(
+		int64_t _id,
+		SourceLocation const& _location,
+		std::vector<std::string> headerNames,
+		std::vector<SourceLocation> headerLocations
+	):
+		ASTNode(_id, _location),
+		m_headerNames(std::move(headerNames)),
+		m_headerLocations(std::move(headerLocations))
+	{
+	}
+
+	void accept(ASTVisitor& _visitor) override;
+	void accept(ASTConstVisitor& _visitor) const override;
+
+	bool hasTime() const;
+	bool hasExpire() const;
+	bool hasPubkey() const;
+
+private:
+	bool has(std::string const& name) const;
+
+private:
+	std::vector<std::string> m_headerNames;
+	std::vector<SourceLocation> m_headerLocations;
+};
+
 /**
  * Definition of a contract or library. This is the only AST nodes where child nodes are not visited in
  * document order. It first visits all struct declarations, then all variable declarations and
@@ -510,14 +568,20 @@ public:
 		std::vector<ASTPointer<InheritanceSpecifier>> _baseContracts,
 		std::vector<ASTPointer<ASTNode>> _subNodes,
 		ContractKind _contractKind = ContractKind::Contract,
-		bool _abstract = false
+		bool _abstract = false,
+		ASTPointer<ExternalMsgHeaders> _externalMsgHeaders = {},
+		ASTPointer<ReplayProtection> _replayProtection = {},
+		bool isContractLibrary = false
 	):
 		Declaration(_id, _location, _name, std::move(_nameLocation)),
 		StructurallyDocumented(_documentation),
 		m_baseContracts(std::move(_baseContracts)),
 		m_subNodes(std::move(_subNodes)),
 		m_contractKind(_contractKind),
-		m_abstract(_abstract)
+		m_abstract(_abstract),
+		m_externalMsgHeaders(std::move(_externalMsgHeaders)),
+		m_replayProtection(std::move(_replayProtection)),
+		m_isContractLibrary{isContractLibrary}
 	{}
 
 	void accept(ASTVisitor& _visitor) override;
@@ -593,6 +657,10 @@ public:
 	ContractDefinition const* superContract(ContractDefinition const& _mostDerivedContract) const;
 	/// @returns the next constructor in the inheritance hierarchy.
 	FunctionDefinition const* nextConstructor(ContractDefinition const& _mostDerivedContract) const;
+	ASTPointer<ExternalMsgHeaders> const externalMsgHeaders() const;
+	ASTPointer<ReplayProtection> const replayProtection() const;
+	bool isContractLibrary() const { return m_isContractLibrary; }
+	FunctionDefinition const *afterSignatureCheck() const;
 
 private:
 	std::multimap<std::string, FunctionDefinition const*> const& definedFunctionsByName() const;
@@ -601,6 +669,9 @@ private:
 	std::vector<ASTPointer<ASTNode>> m_subNodes;
 	ContractKind m_contractKind;
 	bool m_abstract{false};
+	ASTPointer<ExternalMsgHeaders> m_externalMsgHeaders;
+	ASTPointer<ReplayProtection> m_replayProtection;
+	bool m_isContractLibrary = false;
 
 	util::LazyInit<std::vector<std::pair<util::FixedHash<4>, FunctionTypePointer>>> m_interfaceFunctionList[2];
 	util::LazyInit<std::vector<EventDefinition const*>> m_interfaceEvents;
@@ -1122,6 +1193,7 @@ public:
 		ASTPointer<OverrideSpecifier> _overrides = nullptr,
 		bool isStatic = false,
 		bool _noStorage = false,
+		bool _isUnpacked = false,
 		ASTPointer<Expression> _typeExpression = {}
 	):
 		Declaration(_id, _location, _name, std::move(_nameLocation), _visibility),
@@ -1133,6 +1205,7 @@ public:
 		m_overrides(std::move(_overrides)),
 		m_isStatic(isStatic),
 		m_noStorage(_noStorage),
+		m_isUnpacked(_isUnpacked),
 		m_typeExpression(std::move(_typeExpression))
 	{
 		// TODO: consider still asserting unless we are in experimental solidity.
@@ -1186,6 +1259,7 @@ public:
 	bool immutable() const { return m_mutability == Mutability::Immutable; }
 	bool isStatic() const { return m_isStatic; }
 	bool isNoStorage() const { return m_noStorage; }
+	bool isUnpacked() const { return m_isUnpacked; }
 	ASTPointer<OverrideSpecifier> const& overrides() const { return m_overrides; }
 
 	/// @returns the external identifier of this variable (the hash of the signature) as a hex string (works only for public state variables).
@@ -1214,6 +1288,7 @@ private:
 	ASTPointer<OverrideSpecifier> m_overrides; ///< Contains the override specifier node
 	bool m_isStatic = false;
 	bool m_noStorage = false;
+	bool m_isUnpacked = false;
 	ASTPointer<Expression> m_typeExpression;
 };
 
