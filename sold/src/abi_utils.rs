@@ -13,8 +13,8 @@
 use anyhow::Result;
 use anyhow::{bail, format_err};
 use base64::{Engine as _, engine::general_purpose};
-use ed25519_dalek::SecretKey;
 use ed25519_dalek::SigningKey;
+use ed25519_dalek::{PUBLIC_KEY_LENGTH, SecretKey, VerifyingKey};
 use serde_json::json;
 use tsol_asm::Status;
 use tycho_types::abi::{
@@ -22,9 +22,8 @@ use tycho_types::abi::{
     SerializeAbiValueParams, SerializeAbiValues,
 };
 use tycho_types::boc::Boc;
-use tycho_types::cell::Store;
-use tycho_types::models::{SignatureContext, StateInit, StdAddr, StdAddrFormat};
-use tycho_types::prelude::{Cell, CellBuilder, CellFamily};
+use tycho_types::models::{SignatureContext, StdAddr, StdAddrFormat};
+use tycho_types::prelude::{Cell, CellBuilder};
 
 fn read_abi(abi_path: &str) -> Result<Contract> {
     let abi_json = std::fs::read_to_string(abi_path)
@@ -37,7 +36,7 @@ pub fn load_named_abi_values(types: &[NamedAbiType], values: &str) -> Result<Vec
         .map_err(|e| format_err!("Failed to decode \"{}\": {}", values, e))
 }
 
-pub fn init_contract(state_init_path: &str, abi_path: &str, static_values: &str) -> Status {
+pub fn init_contract(abi_path: &str, static_values: &str, public_key: &Option<String>) -> Status {
     // Create new `data` field of `StateInit`
     let contract = read_abi(abi_path)?;
     let init_fields: Vec<NamedAbiType> = contract
@@ -45,34 +44,32 @@ pub fn init_contract(state_init_path: &str, abi_path: &str, static_values: &str)
         .iter()
         .filter(|&field| match &contract.init_data {
             ContractInitData::PlainFields(init_fields) => init_fields.contains(&field.name),
-            ContractInitData::Dict(_) => {
-                panic!()
-            }
+            ContractInitData::Dict(map) => map.contains_key(&field.name),
         })
         .cloned()
         .collect();
+
+    let pk: Option<VerifyingKey> = if let Some(p) = public_key {
+        let bytes = hex::decode(p).map_err(|e| format_err!("Failed to decode pubkey: {}", e))?;
+        let fixed_bytes: [u8; PUBLIC_KEY_LENGTH] = bytes
+            .as_slice()
+            .try_into()
+            .map_err(|e| format_err!("Wrong length of pubkey: {}", e))?;
+        let p =
+            VerifyingKey::from_bytes(&fixed_bytes).map_err(|e| format_err!("Bad pubkey: {}", e))?;
+        Some(p)
+    } else {
+        None
+    };
+
     let named_abi_values = load_named_abi_values(&init_fields, static_values)?;
-    let new_data = contract.encode_init_data(None, &named_abi_values)?;
+    let new_data = contract.encode_init_data(pk.as_ref(), &named_abi_values)?;
 
-    // Update `data` field of `StateInit` structure
-    let state_init = std::fs::read(state_init_path)?;
-    let cell = Boc::decode(state_init)?;
-    let mut state_init = cell.parse::<StateInit>()?;
-    state_init.data = Some(new_data);
+    let new_state_init = Boc::encode_base64(&new_data);
 
-    // Build new StateInit
-    let mut builder = CellBuilder::new();
-    state_init.store_into(&mut builder, Cell::empty_context())?;
-    let cell_state_init: Cell = builder.build()?;
-
-    // Write new StateInit to file
-    let new_state_init = Boc::encode(&cell_state_init);
-    std::fs::write(state_init_path, new_state_init)?;
-
-    let hash = hex::encode(cell_state_init.repr_hash().0);
     println!(
         r#"{{
-    "state_init_hash": "{hash}"
+    "data_in_base64": "{new_state_init}"
 }}
 "#
     );
@@ -228,6 +225,55 @@ pub fn decode_state_data(abi_path: &str, base64_data_or_path: &str) -> Status {
         SerializeAbiValueParams::default(),
     ))?;
     println!("{}", output);
+
+    Ok(())
+}
+
+pub fn decode_function_return(function_name: &str, abi_path: &str, base64_cell: &str) -> Status {
+    let abi = read_abi(abi_path)?;
+
+    let func = abi
+        .functions
+        .get(function_name)
+        .ok_or_else(|| format_err!("Method {} not found", function_name))?;
+
+    let cell = Boc::decode_base64(base64_cell)?;
+
+    if let Ok(decoded) = func.decode_output(cell.as_slice()?) {
+        let output = serde_json::to_string(&SerializeAbiValues::with_params(
+            decoded.as_slice(),
+            SerializeAbiValueParams::default(),
+        ))?;
+        println!("{}", output);
+    } else {
+        bail!("Failed to decode function output")
+    }
+
+    Ok(())
+}
+
+pub fn decode_event(event_name: &str, abi_path: &str, base64_cell: &str) -> Status {
+    let abi = read_abi(abi_path)?;
+
+    let event = abi
+        .events
+        .get(event_name)
+        .ok_or_else(|| format_err!("Event {} not found", event_name))?;
+
+    let cell = Boc::decode_base64(base64_cell)?;
+
+    match event.decode_internal_input(cell.as_slice()?) {
+        Ok(decoded) => {
+            let output = serde_json::to_string(&SerializeAbiValues::with_params(
+                decoded.as_slice(),
+                SerializeAbiValueParams::default(),
+            ))?;
+            println!("{}", output);
+        }
+        Err(e) => {
+            eprintln!("Failed to decode event: {}", e);
+        }
+    }
 
     Ok(())
 }

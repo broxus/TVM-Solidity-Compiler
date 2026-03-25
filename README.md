@@ -13,6 +13,10 @@ Port of the Solidity smart-contract [compiler](https://github.com/ethereum/solid
 The compiler supports two versions of VM: [Tycho](https://github.com/broxus/tycho) and [TON](https://github.com/ton-blockchain/ton).
 Use `sold --tvm-version tycho ...` or `sold --tvm-version ton ...` to select the desired vm.
 
+## Releases
+
+[Releases on github](https://github.com/broxus/TVM-Solidity-Compiler/releases).
+
 ## Build and Install
 
 ### Sold driver
@@ -52,10 +56,8 @@ cmake --build . --config Release -- /m
 
 ## Links
 
- * [Code samples for TON](https://github.com/broxus/TVM-Solidity-Samples) in TVM Solidity
+ * [Code samples for TON on Blueprint](https://github.com/broxus/TVM-Solidity-Samples) in TVM Solidity
  * [Assembler and disassembler](https://github.com/broxus/tsol-asm)
- * [Code samples](https://github.com/everx-labs/samples/tree/master/solidity) in TVM Solidity
- * Example of usage `ever-cli` for working (deploying, calling etc.) with TVM compatible blockchains can be found there: [Write smart contract in Solidity](https://docs.ton.dev/86757ecb2/p/950f8a-write-smart-contract-in-solidity)
  * [Changelog](./Changelog.md)
 
 ## License

@@ -19,8 +19,8 @@ use clap::{CommandFactory, Parser};
 use tsol_asm::Status;
 
 use crate::abi_utils::{
-    decode_abi_param, decode_state_data, encode_body, encode_ext_message, encode_value,
-    init_contract,
+    decode_abi_param, decode_event, decode_function_return, decode_state_data, encode_body,
+    encode_ext_message, encode_value, init_contract,
 };
 use crate::agrs::{Commands, DecodeSubcommands, EncodeSubcommands, SoldArgs, VERSION};
 use crate::solc_run::{run_compile, solidity_version};
@@ -28,9 +28,9 @@ use crate::solc_run::{run_compile, solidity_version};
 pub fn run_subcommand(args: SoldArgs) -> Status {
     match &args.subcommand {
         Commands::Init(init_args) => init_contract(
-            init_args.input.as_str(),
             init_args.abi.as_str(),
             init_args.static_values.as_str(),
+            &init_args.pubkey,
         ),
         Commands::Encode(encode_args) => match encode_args {
             EncodeSubcommands::Cell(encode_args) => {
@@ -58,6 +58,16 @@ pub fn run_subcommand(args: SoldArgs) -> Status {
             DecodeSubcommands::StateData(decode_state_data_args) => decode_state_data(
                 decode_state_data_args.abi.as_str(),
                 decode_state_data_args.input.as_str(),
+            ),
+            DecodeSubcommands::FunctionReturn(func_return) => decode_function_return(
+                func_return.function.as_str(),
+                func_return.abi.as_str(),
+                func_return.input.as_str(),
+            ),
+            DecodeSubcommands::Event(event_args) => decode_event(
+                event_args.event.as_str(),
+                event_args.abi.as_str(),
+                event_args.input.as_str(),
             ),
         },
     }

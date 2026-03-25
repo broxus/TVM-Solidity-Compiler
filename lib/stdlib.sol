@@ -18,7 +18,7 @@ function __QOR(qint a, qint b) assembly pure returns (qint) {
 }
 
 contract stdlib {
-    function __timeReplayProtection(TvmSlice msgBody) view private returns(TvmSlice) {
+    function __timeReplayProtection(TvmSlice msgBody) private returns(TvmSlice) {
         uint64 timestamp = msgBody.load(uint64);
         require(tvm.replayProtectionValue() < timestamp, 52);
         require(timestamp < block.timestamp * 1000 + tvm.replayProtInterval(), 52);
@@ -26,7 +26,7 @@ contract stdlib {
         return msgBody;
     }
 
-    function __seqnoReplayProtection(TvmSlice msgBody) view private returns(TvmSlice) {
+    function __seqnoReplayProtection(TvmSlice msgBody) private returns(TvmSlice) {
         uint64 seqno = msgBody.load(uint64);
         require(tvm.replayProtectionValue() + 1 == seqno, 52);
         tvm.setReplayProtectionValue(seqno);

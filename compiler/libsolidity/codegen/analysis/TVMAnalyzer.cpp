@@ -108,7 +108,7 @@ void TVMAnalyzer::endVisit(FunctionCall const&) {
 bool TVMAnalyzerFlag128::visit(ContractDefinition const& contract) {
 	switch (contract.contractKind()) {
 	case ContractKind::Contract:
-		return true;
+		return !contract.isContractLibrary();
 	case ContractKind::Interface:
 	case ContractKind::Library:
 		return false;

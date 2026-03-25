@@ -345,15 +345,18 @@ void ViewPureChecker::endVisit(MemberAccess const& _memberAccess)
 	{
 		using MagicMember = std::pair<MagicType::Kind, std::string>;
 		std::set<MagicMember> static viewMembers{
-			{MagicType::Kind::TVM, "data"},
+			{MagicType::Kind::TVM, "getData"},
+			{MagicType::Kind::TVM, "replayProtectionValue"},
 		};
 		std::set<MagicMember> static const nonpayableMembers{
 			{MagicType::Kind::TVM, "commit"},
 			{MagicType::Kind::TVM, "exit"},
 			{MagicType::Kind::TVM, "exit1"},
 			{MagicType::Kind::TVM, "rawCommit"},
+			{MagicType::Kind::TVM, "resetStorage"},
 			{MagicType::Kind::TVM, "setData"},
-			{MagicType::Kind::TVM, "resetStorage"}
+			{MagicType::Kind::TVM, "setPubkey"},
+			{MagicType::Kind::TVM, "setReplayProtectionValue"},
 		};
 
 		auto const& type = dynamic_cast<MagicType const&>(*_memberAccess.expression().annotation().type);
