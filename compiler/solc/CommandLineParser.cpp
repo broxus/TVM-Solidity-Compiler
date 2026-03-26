@@ -95,6 +95,7 @@ static std::string const g_strFunctionIds = "function-ids";
 static std::string const g_strPrivateFunctionIds = "private-function-ids";
 static std::string const g_strTVMVersion = "tvm-version";
 static std::string const g_strDebug = "debug";
+static std::string const g_suspendStdout = "suspend-stdout";
 
 
 /// Possible arguments to for --revert-strings
@@ -616,6 +617,10 @@ General Information)").c_str(),
 			po::value<std::string>()->value_name("version")->default_value(TVMVersion{}.name()),
 			"Select desired TVM version. Either tycho, ton."
 		)
+		(
+			g_suspendStdout.c_str(),
+			"Suspend message in stdout about successful compilation."
+		)
 	;
 	desc.add(outputOptions);
 
@@ -1037,6 +1042,9 @@ void CommandLineParser::processArgs()
 		if (!versionOption)
 			solThrow(CommandLineValidationError, "Invalid option for --" + g_strTVMVersion + ": " + versionOptionStr);
 		m_options.tvmParams.tvmVersion = *versionOption;
+	}
+	if (m_args.count(g_suspendStdout)) {
+		m_options.tvmParams.suspendStdout = true;
 	}
 
 	if (m_args.contains(g_strContract))

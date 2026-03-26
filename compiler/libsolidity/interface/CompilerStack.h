@@ -249,6 +249,10 @@ public:
 		m_debugMode = true;
 	}
 
+	void suspendStdout() {
+		m_suspendStdout = true;
+	}
+
 	/// Sets names of the contracts from each source that should be compiled.
 	/// If empty, no filtering is performed and every contract found in the supplied sources goes
 	/// through the default pipeline stages (bytecode-only, no IR).
@@ -540,6 +544,7 @@ private:
 	bool m_doPrintFunctionIds = false;
 	bool m_doPrivateFunctionIds = false;
 	bool m_debugMode = false;
+	bool m_suspendStdout = false;
 	solidity::langutil::TVMVersion m_tvmVersion;
 };
 

@@ -1509,7 +1509,6 @@ public:
 
 		HashExt,
 
-		LogTVM, ///< logtvm(...)
 		Format, ///< format function to generate an arbitrary string.
 
 		Event, ///< syntactic sugar for LOG*
@@ -1585,27 +1584,28 @@ public:
 		TVMCode, ///< tvm.code()
 		TVMCommit, ///< tvm.commit()
 		TVMDeploy, ///< functions to deploy contract from contract
+		TVMDuePayment,
 		TVMExit, ///< tvm.exit()
 		TVMExit1, ///< tvm.exit1()
 		TVMHash, ///< tvm.hash()
+		TVMLoadLibrary,
+		TVMLog, ///< tvm.log(...)
+		TVMPackData, ///< tvm.packData()
+		TVMPrevBlocksInfo, ///< tvm.prevBlocksInfo()
+		TVMPrevKeyBlock, ///< tvm.prevKeyBlock()
+		TVMPrevMCBlocks, ///< tvm.prevMCBlocks()
+		TVMPrevMCBlocks100, ///< tvm.prevMCBlocks100()
 		TVMPubkey, ///< tvm.pubkey()
+		TVMRawMsg, ///< tvm.sendmsg()
 		TVMReplayProtInterval, ///< tvm.replayProtInterval()
 		TVMReplayProtTime, ///< tvm.replayProtectionValue()
 		TVMResetStorage, ///< tvm.resetStorage()
-		TVMRawMsg, ///< tvm.sendmsg()
 		TVMSendRawMsg, ///< tvm.sendrawmsg()
 		TVMSetGasLimit, ///< tvm.setGasLimit()
 		TVMSetPubkey, ///< tvm.setPubkey()
 		TVMSetReplayProtTime, ///< tvm.setReplayProtectionValue()
 		TVMSetcode, ///< tvm.setcode()
-		TVMDuePayment,
-		TVMLoadLibrary,
 		TVMUnpackData, ///< tvm.unpackData()
-		TVMPackData, ///< tvm.packData()
-		TVMPrevBlocksInfo, ///< tvm.prevBlocksInfo()
-		TVMPrevMCBlocks, ///< tvm.prevMCBlocks()
-		TVMPrevKeyBlock, ///< tvm.prevKeyBlock()
-		TVMPrevMCBlocks100, ///< tvm.prevMCBlocks100()
 
 		ConfigGetForwardFee, ///< config.getForwardFee()
 		ConfigGetForwardFeeSimple, ///< config.getForwardFeeSimple()

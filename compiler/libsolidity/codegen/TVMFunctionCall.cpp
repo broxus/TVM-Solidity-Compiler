@@ -3495,7 +3495,7 @@ bool FunctionCallCompiler::checkSolidityUnits() const {
 		}
 		return true;
 	}
-	case FunctionType::Kind::LogTVM: {
+	case FunctionType::Kind::TVMLog: {
 		compileLog();
 		return true;
 	}

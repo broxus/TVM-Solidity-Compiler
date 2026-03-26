@@ -869,7 +869,8 @@ bool CompilerStack::compile(State _stopAfter, bool json)
 							outDirPathAndStem,
 							m_doPrintFunctionIds,
 							m_doPrivateFunctionIds,
-							m_debugMode
+							m_debugMode,
+							m_suspendStdout
 						);
 					}
 					m_didCompileSomething = true;

@@ -49,6 +49,8 @@ pub fn run_subcommand(args: SoldArgs) -> Status {
                 encode_message_args.address.as_str(),
                 encode_message_args.method.as_str(),
                 encode_message_args.params.as_str(),
+                encode_message_args.global_id,
+                encode_message_args.capabilities,
             ),
         },
         Commands::Decode(decode_subcommand) => match decode_subcommand {

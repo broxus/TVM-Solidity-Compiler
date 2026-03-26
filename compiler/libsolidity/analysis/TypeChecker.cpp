@@ -3839,7 +3839,7 @@ bool TypeChecker::visit(FunctionCall const& _functionCall)
 			returnTypes = functionType->returnParameterTypes();
 			break;
 		}
-		case FunctionType::Kind::LogTVM: {
+		case FunctionType::Kind::TVMLog: {
 			expectedOneArgument();
 			Type const *type = arguments.at(0)->annotation().type;
 			auto strLiteral = dynamic_cast<StringLiteralType const *>(type);

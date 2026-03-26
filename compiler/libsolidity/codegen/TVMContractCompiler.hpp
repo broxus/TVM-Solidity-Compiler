@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2025 EverX. All Rights Reserved.
+ * Copyright (C) 2020-2026 EverX. All Rights Reserved.
  *
  * Licensed under the  terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License.
@@ -42,14 +42,16 @@ public:
 		std::string const& fileName,
 		ContractDefinition const* contract,
 		std::vector<ASTPointer<SourceUnit>> const& _sourceUnits,
-		std::vector<PragmaDirective const*> const& pragmaDirectives
+		std::vector<PragmaDirective const*> const& pragmaDirectives,
+		bool suspendStdout
 	);
 	static void generateCodeAndSaveToFile(
 		std::string const& fileName,
 		ContractDefinition const& contract,
 		std::vector<ASTPointer<SourceUnit>> const& _sourceUnits,
 		PragmaDirectiveHelper const& pragmaHelper,
-		bool debugMode
+		bool debugMode,
+		bool suspendStdout
 	);
 	static Pointer<Contract> generateContractCode(
 		ContractDefinition const* contract,

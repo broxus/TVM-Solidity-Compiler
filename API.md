@@ -4011,7 +4011,7 @@ See also [calculate_storage_fee](https://github.com/ton-blockchain/ton/blob/v202
 #### config.getForwardFee()
 
 ```TVMSolidity
-config.getForwardFee(uint63 cells, uint63 bits, uint63 seconds, bool isMasterChain) returns (coins fee)
+config.getForwardFee(uint63 cells, uint63 bits, bool isMasterChain) returns (coins fee)
 ```
 
 Calculates forward fees in nanotons for an outgoing message. `isMasterChain` is true if the source or the destination is in the masterchain and false if both are in the basechain. **Note**: `cells` and `bits` in the message should be counted with deduplication and the root-not-counted rules.
@@ -4021,7 +4021,7 @@ See also [compute_fwd_fees256](https://github.com/ton-blockchain/ton/blob/v2026.
 #### config.getForwardFeeSimple()
 
 ```TVMSolidity
-config.getForwardFeeSimple(uint63 cells, uint63 bits, uint63 seconds, bool isMasterChain) returns (coins fee)
+config.getForwardFeeSimple(uint63 cells, uint63 bits, bool isMasterChain) returns (coins fee)
 ```
 
 Calculates the additional forward cost in nanotons for a message containing additional `cells` and `bits`. This is the same as `config.getForwardFee()`, but without the lump price calculated as `(bits * bit_price + cells * cell_price) / 2^16`.
@@ -4435,22 +4435,22 @@ messages replaying.
 
 ```TVMSolidity
 tvm.log(string log);
-logtvm(string log);
 ```
 
 Dumps `log` string. This function is a wrapper for TVM instructions
 `PRINTSTR` (for constant literal strings shorter than 16 symbols) and
-`STRDUMP` (for other strings). `logtvm` is an alias for `tvm.log(string)`. Example:
+`STRDUMP` (for other strings). Can be used for debug. Example:
 
 ```TVMSolidity
 tvm.log("Hello, world!");
-logtvm("99_Bottles");
 
 string s = "Some_text";
 tvm.log(s);
 ```
 
 **Note:** For long strings dumps only the first 127 symbols.
+
+See also: [format](#format).
 
 ##### tvm.setcode()
 

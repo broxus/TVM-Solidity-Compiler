@@ -107,6 +107,11 @@ pub struct EncodeMessageArgs {
     /// Function arguments in JSON format
     #[clap(value_parser)]
     pub params: String,
+    /// Global ID for Tycho only
+    #[clap(long, value_parser, value_names = &["JSON"])]
+    pub global_id: Option<i32>,
+    #[clap(long, value_parser, value_names = &["JSON"])]
+    pub capabilities: Option<u64>,
 }
 
 #[derive(Subcommand, Debug)]

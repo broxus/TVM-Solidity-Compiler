@@ -22,7 +22,7 @@ use tycho_types::abi::{
     SerializeAbiValueParams, SerializeAbiValues,
 };
 use tycho_types::boc::Boc;
-use tycho_types::models::{SignatureContext, StdAddr, StdAddrFormat};
+use tycho_types::models::{GlobalCapabilities, SignatureContext, StdAddr, StdAddrFormat};
 use tycho_types::prelude::{Cell, CellBuilder};
 
 fn read_abi(abi_path: &str) -> Result<Contract> {
@@ -132,6 +132,8 @@ pub fn encode_ext_message(
     address: &str,
     method: &str,
     params: &str,
+    global_id: Option<i32>,
+    capabilities: Option<u64>,
 ) -> Status {
     let expired_at = if let Some(lifetime_duration) = lifetime {
         let time_in_seconds = time.parse::<u64>()? / 1000;
@@ -162,7 +164,18 @@ pub fn encode_ext_message(
     let x = SecretKey::try_from(hex_sign).unwrap();
     let sign = SigningKey::from_bytes(&x);
 
-    let ext_message = unsigned_ext_msg.sign(&sign, SignatureContext::empty())?;
+    let signature_context = if let Some(global_id) = global_id
+        && let Some(capabilities) = capabilities
+    {
+        SignatureContext {
+            global_id,
+            capabilities: GlobalCapabilities::new(capabilities),
+        }
+    } else {
+        SignatureContext::empty()
+    };
+
+    let ext_message = unsigned_ext_msg.sign(&sign, signature_context)?;
     let byte_body = Boc::encode(ext_message.body.1);
     let ser_msg = json!({
         "message": general_purpose::STANDARD.encode(byte_body),

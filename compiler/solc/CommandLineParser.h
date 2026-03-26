@@ -242,6 +242,7 @@ struct CommandLineOptions
 		bool printPrivateFunctionIds = false;
 		langutil::TVMVersion tvmVersion;
 		bool debugMode = false;
+		bool suspendStdout = false;
 	} tvmParams;
 };
 

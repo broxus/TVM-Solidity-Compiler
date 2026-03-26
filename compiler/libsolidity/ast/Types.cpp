@@ -3277,7 +3277,7 @@ std::string FunctionType::richIdentifier() const
 	case Kind::IntCast: id += "integercast"; break;
 	case Kind::Internal: id += "internal"; break;
 	case Kind::KECCAK256: id += "keccak256"; break;
-	case Kind::LogTVM: id += "logtvm"; break;
+	case Kind::TVMLog: id += "tvmlog"; break;
 	case Kind::MappingAt: id += "mappingat"; break;
 	case Kind::MappingDelMinOrMax: id += "mapdelmin"; break;
 	case Kind::MappingEmpty: id += "mapempty"; break;
@@ -4650,7 +4650,7 @@ MemberList::MemberMap getTvmMembers() {
 		{"getData", TypeProvider::function({}, {TypeProvider::tvmcell()}, {}, {{}}, FunctionType::Kind::TVMCommit, StateMutability::Pure)},
 		{"setData", TypeProvider::function({TypeProvider::tvmcell()}, {}, {{}}, {}, FunctionType::Kind::TVMCommit, StateMutability::NonPayable)},
 		{"resetStorage", TypeProvider::function(strings(), strings(), FunctionType::Kind::TVMResetStorage, StateMutability::NonPayable)},
-		{"log", TypeProvider::function(strings{"string"}, strings{}, FunctionType::Kind::LogTVM, StateMutability::Pure)},
+		{"log", TypeProvider::function(strings{"string"}, strings{}, FunctionType::Kind::TVMLog, StateMutability::Pure)},
 		{"exit", TypeProvider::function(strings{}, strings{}, FunctionType::Kind::TVMExit, StateMutability::Pure)},
 		{"exit1", TypeProvider::function(strings{}, strings{}, FunctionType::Kind::TVMExit1, StateMutability::Pure)},
 		{"setGasLimit", TypeProvider::function({"uint"}, {}, FunctionType::Kind::TVMSetGasLimit, StateMutability::Pure)},
@@ -5839,7 +5839,7 @@ MemberList::MemberMap MagicType::nativeMembers(ASTNode const*) const
 			{"forwardFee", TypeProvider::coins()},
 			{"createdLogicalTime", TypeProvider::uint(64)},
 			{"createdAt", TypeProvider::uint(32)},
-			{"stateInit", TypeProvider::tvmcell()},
+			{"stateInit", TypeProvider::optional(TypeProvider::tvmcell())},
 
 			// Other fields
 			{"body", TypeProvider::tvmslice()},

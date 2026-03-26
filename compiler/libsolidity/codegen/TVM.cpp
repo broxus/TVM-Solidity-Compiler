@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2025 EverX. All Rights Reserved.
+ * Copyright (C) 2019-2026 EverX. All Rights Reserved.
  *
  * Licensed under the  terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License.
@@ -23,6 +23,7 @@ using namespace solidity::frontend;
 solidity::langutil::ErrorReporter* GlobalParams::g_errorReporter{};
 solidity::langutil::CharStreamProvider* GlobalParams::g_charStreamProvider{};
 solidity::util::SetOnce<solidity::langutil::TVMVersion> GlobalParams::g_tvmVersion{};
+bool GlobalParams::g_suspend_stdout{};
 
 void TVMCompilerProceedContract(
 	ContractDefinition const& _contract,
@@ -33,7 +34,8 @@ void TVMCompilerProceedContract(
 	std::string const& outDirPathAndStem,
 	bool doPrintFunctionIds,
 	bool doPrivateFunctionIds,
-	bool debugMode
+	bool debugMode,
+	bool suspendStdout
 ) {
 	PragmaDirectiveHelper pragmaHelper{*pragmaDirectives};
 	if (doPrintFunctionIds) {
@@ -44,10 +46,17 @@ void TVMCompilerProceedContract(
 			printPrivateFunctionIds(outDirPathAndStem + ".pids", _contract, _sourceUnits, pragmaHelper, debugMode);
 	}
 	if (generateCode) {
-		TVMContractCompiler::
-			generateCodeAndSaveToFile(outDirPathAndStem + ".code", _contract, _sourceUnits, pragmaHelper, debugMode);
+		TVMContractCompiler::generateCodeAndSaveToFile(
+			outDirPathAndStem + ".code",
+			_contract,
+			_sourceUnits,
+			pragmaHelper,
+			debugMode,
+			suspendStdout
+		);
 	}
 	if (generateAbi) {
-		TVMContractCompiler::generateABI(outDirPathAndStem + ".abi.json", &_contract, _sourceUnits, *pragmaDirectives);
+		TVMContractCompiler::
+			generateABI(outDirPathAndStem + ".abi.json", &_contract, _sourceUnits, *pragmaDirectives, suspendStdout);
 	}
 }
