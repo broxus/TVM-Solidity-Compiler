@@ -576,6 +576,8 @@ void CommandLineInterface::compile()
 			m_compiler->printPrivateFunctionIds();
 		if (m_options.tvmParams.debugMode)
 			m_compiler->debugMode();
+		if (m_options.tvmParams.suspendStdout)
+			m_compiler->suspendStdout();
 		m_compiler->setOutputFolder(m_options.output.dir.string());
 		m_compiler->setTVMVersion(m_options.tvmParams.tvmVersion);
 

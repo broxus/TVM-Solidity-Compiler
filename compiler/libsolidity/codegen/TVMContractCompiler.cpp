@@ -65,12 +65,14 @@ void TVMContractCompiler::generateABI(
 	std::string const& fileName,
 	ContractDefinition const* contract,
 	std::vector<ASTPointer<SourceUnit>> const& _sourceUnits,
-	std::vector<PragmaDirective const*> const& pragmaDirectives
+	std::vector<PragmaDirective const*> const& pragmaDirectives,
+	bool suspendStdout
 ) {
 	std::ofstream outFile = openFile(fileName);
 	TVMABI::generateABI(contract, _sourceUnits, pragmaDirectives, outFile);
 	outFile.close();
-	std::cout << "ABI was generated and saved to file " << fileName << std::endl;
+	if (!suspendStdout)
+		std::cout << "ABI was generated and saved to file " << fileName << std::endl;
 }
 
 void TVMContractCompiler::generateCodeAndSaveToFile(
@@ -78,7 +80,8 @@ void TVMContractCompiler::generateCodeAndSaveToFile(
 	ContractDefinition const& contract,
 	std::vector<ASTPointer<SourceUnit>> const& _sourceUnits,
 	PragmaDirectiveHelper const& pragmaHelper,
-	bool debugMode
+	bool debugMode,
+	bool suspendStdout
 ) {
 	Pointer<Contract> codeContract = generateContractCode(&contract, _sourceUnits, pragmaHelper, debugMode);
 
@@ -86,7 +89,8 @@ void TVMContractCompiler::generateCodeAndSaveToFile(
 	Printer p{outFile};
 	codeContract->accept(p);
 	outFile.close();
-	std::cout << "Code was generated and saved to file " << fileName << std::endl;
+	if (!suspendStdout)
+		std::cout << "Code was generated and saved to file " << fileName << std::endl;
 }
 
 Pointer<Contract> TVMContractCompiler::generateContractCode(

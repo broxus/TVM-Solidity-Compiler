@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022-2025 EverX. All Rights Reserved.
+ * Copyright (C) 2022-2026 EverX. All Rights Reserved.
  *
  * Licensed under the SOFTWARE EVALUATION License (the "License"); you may not use
  * this file except in compliance with the License.
@@ -16,11 +16,11 @@ mod libsolc;
 mod solc_run;
 
 use clap::{CommandFactory, Parser};
-use ever_block::Status;
+use tsol_asm::Status;
 
 use crate::abi_utils::{
-    decode_abi_param, decode_state_data, encode_body, encode_ext_message, encode_value,
-    init_contract,
+    decode_abi_param, decode_event, decode_function_return, decode_state_data, encode_body,
+    encode_ext_message, encode_value, init_contract,
 };
 use crate::agrs::{Commands, DecodeSubcommands, EncodeSubcommands, SoldArgs, VERSION};
 use crate::solc_run::{run_compile, solidity_version};
@@ -28,9 +28,9 @@ use crate::solc_run::{run_compile, solidity_version};
 pub fn run_subcommand(args: SoldArgs) -> Status {
     match &args.subcommand {
         Commands::Init(init_args) => init_contract(
-            init_args.input.as_str(),
             init_args.abi.as_str(),
             init_args.static_values.as_str(),
+            &init_args.pubkey,
         ),
         Commands::Encode(encode_args) => match encode_args {
             EncodeSubcommands::Cell(encode_args) => {
@@ -49,6 +49,8 @@ pub fn run_subcommand(args: SoldArgs) -> Status {
                 encode_message_args.address.as_str(),
                 encode_message_args.method.as_str(),
                 encode_message_args.params.as_str(),
+                encode_message_args.global_id,
+                encode_message_args.capabilities,
             ),
         },
         Commands::Decode(decode_subcommand) => match decode_subcommand {
@@ -59,6 +61,16 @@ pub fn run_subcommand(args: SoldArgs) -> Status {
                 decode_state_data_args.abi.as_str(),
                 decode_state_data_args.input.as_str(),
             ),
+            DecodeSubcommands::FunctionReturn(func_return) => decode_function_return(
+                func_return.function.as_str(),
+                func_return.abi.as_str(),
+                func_return.input.as_str(),
+            ),
+            DecodeSubcommands::Event(event_args) => decode_event(
+                event_args.event.as_str(),
+                event_args.abi.as_str(),
+                event_args.input.as_str(),
+            ),
         },
     }
 }
@@ -67,7 +79,10 @@ fn main() {
     VERSION.set(solidity_version()).unwrap();
 
     let args: Vec<String> = std::env::args().collect();
-    let arg1 = args[1].clone();
+    let arg1 = match args.get(1) {
+        None => "".to_owned(),
+        Some(s) => s.to_owned(),
+    };
     let result = if args.len() == 1
         || (args.len() >= 2 && args[1] != "init" && args[1] != "encode" && args[1] != "decode")
     {

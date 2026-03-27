@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2025 EverX. All Rights Reserved.
+ * Copyright (C) 2019-2026 EverX. All Rights Reserved.
  *
  * Licensed under the  terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License.
@@ -28,6 +28,7 @@ public:
 	static solidity::langutil::ErrorReporter* g_errorReporter;
 	static solidity::langutil::CharStreamProvider* g_charStreamProvider;
 	static solidity::util::SetOnce<solidity::langutil::TVMVersion> g_tvmVersion;
+	static bool g_suspend_stdout;
 };
 
 void TVMCompilerProceedContract(
@@ -39,5 +40,6 @@ void TVMCompilerProceedContract(
 	std::string const& outDirPathAndStem,
 	bool doPrintFunctionIds,
 	bool doPrivateFunctionIds,
-	bool debugMode
+	bool debugMode,
+	bool suspendStdout
 );

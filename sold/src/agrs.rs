@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 EverX. All Rights Reserved.
+ * Copyright (C) 2025-2026 EverX. All Rights Reserved.
  *
  * Licensed under the SOFTWARE EVALUATION License (the "License"); you may not use
  * this file except in compliance with the License.
@@ -40,12 +40,12 @@ pub enum Commands {
 
 #[derive(Args, Debug)]
 pub struct InitArgs {
-    /// Path to the boc file containing contract's StateInit
-    #[clap(value_parser)]
-    pub input: String,
     /// Initial data in json format
     #[clap(long, value_parser, value_names = &["JSON"])]
     pub static_values: String,
+    /// Pubkey for abi version < 2.4
+    #[clap(long, value_parser, value_names = &["JSON"])]
+    pub pubkey: Option<String>,
     /// Path to the abi file
     #[clap(long, value_parser, value_names = &["PATH"])]
     pub abi: String,
@@ -107,6 +107,11 @@ pub struct EncodeMessageArgs {
     /// Function arguments in JSON format
     #[clap(value_parser)]
     pub params: String,
+    /// Global ID for Tycho only
+    #[clap(long, value_parser, value_names = &["JSON"])]
+    pub global_id: Option<i32>,
+    #[clap(long, value_parser, value_names = &["JSON"])]
+    pub capabilities: Option<u64>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -115,6 +120,10 @@ pub enum DecodeSubcommands {
     AbiParam(DecodeAbiParamArgs),
     /// Decode all contract's state variables
     StateData(DecodeStateDataArgs),
+    /// Decode function return data for externalMsg functions
+    FunctionReturn(FunctionReturnArgs),
+    /// Decode event
+    Event(DecodeEventArgs),
 }
 
 #[derive(Args, Debug)]
@@ -132,6 +141,32 @@ pub struct DecodeStateDataArgs {
     /// Abi for value
     #[clap(long, value_parser, value_names = &["JSON"])]
     pub abi: String,
+    /// base64 state's data or path to the file
+    #[clap(value_parser)]
+    pub input: String,
+}
+
+#[derive(Args, Debug)]
+pub struct FunctionReturnArgs {
+    /// Abi for value
+    #[clap(long, value_parser, value_names = &["JSON"])]
+    pub abi: String,
+    /// Function name
+    #[clap(long, value_parser, value_names = &["JSON"])]
+    pub function: String,
+    /// base64 state's data or path to the file
+    #[clap(value_parser)]
+    pub input: String,
+}
+
+#[derive(Args, Debug)]
+pub struct DecodeEventArgs {
+    /// Abi for value
+    #[clap(long, value_parser, value_names = &["JSON"])]
+    pub abi: String,
+    /// Function name
+    #[clap(long, value_parser, value_names = &["JSON"])]
+    pub event: String,
     /// base64 state's data or path to the file
     #[clap(value_parser)]
     pub input: String,
